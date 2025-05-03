@@ -7,8 +7,9 @@
 	import FilterButtons from '$lib/components/FilterButtons.svelte';
 	import FileNameDisplay from '$lib/components/FileNameDisplay.svelte';
 	import ComparisonStatusButtons from '$lib/components/ComparisonStatusButtons.svelte';
+	import { goto } from '$app/navigation';
 	type ComparisonStatus = Exclude<FilterOptions, 'all'>;
-
+	let csvImportInput: HTMLInputElement;
 	let allItems: Array<{
 		base: string;
 		code: string;
@@ -161,43 +162,190 @@
 			tx.onabort = () => reject(tx.error ?? new DOMException('Transaction aborted', 'AbortError'));
 		});
 	}
+	function sendAnotherZip() {
+		goto('/'); // Navigate to the root page
+	}
 
-	onMount(async () => {
+	// Function to trigger CSV export
+	async function exportCsv() {
+		error = ''; // Clear previous errors
 		try {
 			const db = await openDB();
-			// Add 'comments' to the transaction stores
+			const tx = db.transaction(['stateComparison', 'comments'], 'readonly');
+			const [states, commentsData] = await Promise.all([
+				requestToPromise(tx.objectStore('stateComparison').getAll()),
+				requestToPromise(tx.objectStore('comments').getAll())
+			]);
+			await transactionComplete(tx);
+
+			const stateMap = new Map(states.map((s) => [s.base, s.state]));
+			const commentMap = new Map(commentsData.map((c) => [c.base, c.comment]));
+			const allBases = new Set([...stateMap.keys(), ...commentMap.keys()]);
+
+			let csvContent = 'base,state,comment\n';
+			for (const base of allBases) {
+				const state = stateMap.get(base) || 'not-compared'; // Default state if missing
+				const comment = commentMap.get(base) || '';
+				// Escape commas and quotes in comment
+				const escapedComment = `"${comment.replace(/"/g, '""')}"`;
+				csvContent += `${base},${state},${escapedComment}\n`;
+			}
+
+			const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+			const link = document.createElement('a');
+			const url = URL.createObjectURL(blob);
+			link.setAttribute('href', url);
+			link.setAttribute('download', 'pibic_export.csv');
+			link.style.visibility = 'hidden';
+			document.body.appendChild(link);
+			link.click();
+			document.body.removeChild(link);
+			URL.revokeObjectURL(url);
+		} catch (e: any) {
+			console.error('Failed to export CSV:', e);
+			error = `Failed to export CSV: ${e.message}`;
+		}
+	}
+
+	// Function to trigger the hidden file input
+	function triggerCsvImport() {
+		error = ''; // Clear previous errors
+		csvImportInput.click();
+	}
+
+	// Function to handle the selected CSV file
+	async function handleCsvImport(event: Event) {
+		const input = event.target as HTMLInputElement;
+		if (!input.files || input.files.length === 0) {
+			return;
+		}
+		const file = input.files[0];
+		input.value = ''; // Reset input for same-file selection
+
+		if (!file.name.endsWith('.csv')) {
+			error = 'Por favor selecione um arquivo CSV.';
+			return;
+		}
+
+		loading = true; // Show loading indicator
+		error = '';
+
+		try {
+			const fileContent = await file.text();
+			const lines = fileContent.split('\n').map((line) => line.trim());
+
+			if (lines.length < 2 || lines[0].toLowerCase() !== 'base,state,comment') {
+				throw new Error('CSV inválido. Cabeçalho esperado: base,state,comment');
+			}
+
+			const db = await openDB();
+			// Use separate transactions for safety or a single one if atomicity is crucial
+			const stateTx = db.transaction('stateComparison', 'readwrite');
+			const commentTx = db.transaction('comments', 'readwrite');
+			const stateStore = stateTx.objectStore('stateComparison');
+			const commentStore = commentTx.objectStore('comments');
+
+			const updatePromises: Promise<any>[] = [];
+
+			const validStates: Set<ComparisonStatus> = new Set(['not-compared', 'equal', 'different']);
+
+			for (let i = 1; i < lines.length; i++) {
+				if (!lines[i]) continue; // Skip empty lines
+
+				// Basic CSV parsing (assumes commas only as delimiters, quoted comments)
+				const parts = lines[i].split(',');
+				if (parts.length < 2) {
+					console.warn(`Skipping invalid line ${i + 1}: ${lines[i]}`);
+					continue;
+				}
+				const base = parts[0].trim();
+				const state = parts[1].trim() as ComparisonStatus;
+				// Join remaining parts for comment, remove surrounding quotes if present
+				let comment = parts.slice(2).join(',');
+				if (comment.startsWith('"') && comment.endsWith('"')) {
+					comment = comment.substring(1, comment.length - 1);
+				}
+				// Unescape double quotes
+				comment = comment.replace(/""/g, '"');
+
+				if (!base) {
+					console.warn(`Skipping line ${i + 1} due to missing base.`);
+					continue;
+				}
+
+				// Validate state
+				if (!validStates.has(state)) {
+					console.warn(`Skipping line ${i + 1} due to invalid state: ${state}`);
+					continue; // Skip if state is not valid
+				}
+
+				// Check if base exists in the current items (optional, but good practice)
+				const existingItem = allItems.find((item) => item.base === base);
+				if (!existingItem) {
+					console.warn(`Skipping line ${i + 1} as base "${base}" not found in current dataset.`);
+					continue;
+				}
+
+				// Add update operations to promises
+				updatePromises.push(requestToPromise(stateStore.put({ base, state })));
+				updatePromises.push(requestToPromise(commentStore.put({ base, comment })));
+			}
+
+			// Wait for all DB updates and transactions to complete
+			await Promise.all(updatePromises);
+			await Promise.all([transactionComplete(stateTx), transactionComplete(commentTx)]);
+
+			// Refresh data from DB to show changes
+			await refreshAllItems();
+			console.log('CSV importado com sucesso.');
+		} catch (e: any) {
+			console.error('Falha ao importar CSV:', e);
+			error = `Falha ao importar CSV: ${e.message}`;
+		} finally {
+			loading = false;
+		}
+	}
+
+	// Helper function to reload all items from DB
+	async function refreshAllItems() {
+		try {
+			const db = await openDB();
 			const tx = db.transaction(
 				['pythonCode', 'pythonMeta', 'markdown', 'stateComparison', 'comments'],
 				'readonly'
 			);
-
-			// Fetch comments along with other data
 			const [codes, metas, mds, states, commentsData] = await Promise.all([
 				requestToPromise(tx.objectStore('pythonCode').getAll()),
 				requestToPromise(tx.objectStore('pythonMeta').getAll()),
 				requestToPromise(tx.objectStore('markdown').getAll()),
 				requestToPromise(tx.objectStore('stateComparison').getAll()),
-				requestToPromise(tx.objectStore('comments').getAll()) // Fetch comments
+				requestToPromise(tx.objectStore('comments').getAll())
 			]);
+			await transactionComplete(tx);
 
-			// combinando por `base`
 			const map = new Map<string, any>();
 			for (const c of codes) map.set(c.base, { base: c.base, code: c.code });
 			for (const m of metas) map.get(m.base).meta = m.meta;
 			for (const m of mds) map.get(m.base).md = m.md;
 			for (const s of states) map.get(s.base).state = s.state;
-			// Add comments to the map
 			for (const c of commentsData) {
 				if (map.has(c.base)) {
 					map.get(c.base).comment = c.comment;
 				}
 			}
 			allItems = Array.from(map.values());
+			// Reset current item based on refreshed data and current page/filter
+			page = 1; // Reset page after import/refresh
+			// current derived state will update automatically
 		} catch (e: any) {
-			error = e.message;
-		} finally {
-			loading = false;
+			error = `Failed to refresh data: ${e.message}`;
 		}
+	}
+
+	onMount(async () => {
+		loading = true;
+		await refreshAllItems(); // Use the refresh function on mount
+		loading = false;
 	});
 </script>
 
@@ -206,6 +354,18 @@
 {:else if error}
 	<p class="error">{error}</p>
 {:else if allItems.length > 0}
+	<div class="action-buttons">
+		<button onclick={sendAnotherZip}>Enviar outro zip</button>
+		<button onclick={exportCsv}>Exportar csv</button>
+		<button onclick={triggerCsvImport}>Importar csv</button>
+		<input
+			type="file"
+			accept=".csv"
+			bind:this={csvImportInput}
+			onchange={handleCsvImport}
+			style="display: none;"
+		/>
+	</div>
 	<FilterButtons bind:selectedFilter={currentFilter} />
 
 	{#if filteredItems.length > 0}
