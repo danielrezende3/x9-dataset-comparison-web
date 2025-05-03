@@ -3,6 +3,7 @@
 	import type { Markdown } from '$lib/types/markdown';
 	import type { PythonCode } from '$lib/types/pythonCode';
 	import type { PythonMeta } from '$lib/types/pythonMeta';
+	import type { stateComparison } from '$lib/types/stateComparison';
 	import JSZip from 'jszip';
 
 	// Bind targets
@@ -138,7 +139,7 @@
 			tx.objectStore('pythonCode').put({ base, code: codeTxt } as PythonCode);
 			tx.objectStore('pythonMeta').put({ base, meta: JSON.parse(metaTxt) } as PythonMeta);
 			tx.objectStore('markdown').put({ base, md: trimmedMd } as Markdown);
-
+			tx.objectStore('stateComparison').put({ base, state: 'not-compared' } as stateComparison);
 			// Wait for this transaction to complete before moving to the next base
 			await new Promise((resolve, reject) => {
 				tx.oncomplete = () => resolve(undefined);
@@ -160,6 +161,7 @@
 					db.createObjectStore('pythonCode', { keyPath: 'base' });
 					db.createObjectStore('pythonMeta', { keyPath: 'base' });
 					db.createObjectStore('markdown', { keyPath: 'base' });
+					db.createObjectStore('stateComparison', { keyPath: 'base' });
 				};
 				openReq.onsuccess = () => resolve(openReq.result);
 				openReq.onerror = () => reject(openReq.error);
