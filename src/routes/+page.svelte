@@ -134,7 +134,10 @@
 				mdLines.length > 2 ? mdLines.slice(1, mdLines.length - 1).join('\n') : mdTxt;
 
 			// Then create a new transaction and immediately use it
-			const tx = db.transaction(['pythonCode', 'pythonMeta', 'markdown', 'stateComparison'], 'readwrite');
+			const tx = db.transaction(
+				['pythonCode', 'pythonMeta', 'markdown', 'stateComparison'],
+				'readwrite'
+			);
 
 			tx.objectStore('pythonCode').put({ base, code: codeTxt } as PythonCode);
 			tx.objectStore('pythonMeta').put({ base, meta: JSON.parse(metaTxt) } as PythonMeta);
@@ -162,6 +165,7 @@
 					db.createObjectStore('pythonMeta', { keyPath: 'base' });
 					db.createObjectStore('markdown', { keyPath: 'base' });
 					db.createObjectStore('stateComparison', { keyPath: 'base' });
+					db.createObjectStore('comments', { keyPath: 'base' }); // Add this line
 				};
 				openReq.onsuccess = () => resolve(openReq.result);
 				openReq.onerror = () => reject(openReq.error);

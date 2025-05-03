@@ -7,16 +7,17 @@
 	import FilterButtons from '$lib/components/FilterButtons.svelte';
 	import FileNameDisplay from '$lib/components/FileNameDisplay.svelte';
 	import ComparisonStatusButtons from '$lib/components/ComparisonStatusButtons.svelte';
-	import CommentSection from '$lib/components/CommentSection.svelte';
-	type Comment = { id: number; base: string; comment: string; timestamp: Date };
 	type ComparisonStatus = Exclude<FilterOptions, 'all'>;
+
 	let allItems: Array<{
 		base: string;
 		code: string;
 		meta: any;
 		md: string;
 		state: ComparisonStatus;
+		comment?: string; // Add comment field
 	}> = $state([]);
+
 	let loading = $state(true);
 	let error = $state('');
 	let page = $state(1);
@@ -35,7 +36,10 @@
 	let current = $derived(filteredItems[page - 1] ?? null);
 	let previousState: ComparisonStatus | null = $state(null);
 	let previousBase: string | null = $state(null);
-	let currentComments: Comment[] = $state([]); // State for current item's comments
+	// Remove currentComments state
+	// let currentComments: Comment[] = $state([]); // State for current item's comments
+	let currentComment = $state(''); // State for the single comment string
+
 	$effect(() => {
 		// This code runs whenever currentFilter changes
 		page = 1;
@@ -44,11 +48,13 @@
 
 	$effect(() => {
 		if (current) {
-			// Update previous state when item changes or on initial load
+			// Update previous state and load comment when item changes or on initial load
 			if (current.base !== previousBase) {
 				previousBase = current.base;
 				previousState = current.state;
-				fetchComments(current.base); // Fetch comments when item changes
+				currentComment = current.comment || ''; // Load comment for the current item
+				// Remove fetchComments call
+				// fetchComments(current.base); // Fetch comments when item changes
 			} else {
 				// Item is the same, check if state changed from the previous known state
 				if (current.state !== previousState) {
@@ -61,38 +67,83 @@
 			// Reset when there's no current item
 			previousBase = null;
 			previousState = null;
-			currentComments = []; // Clear comments when no item is selected
+			currentComment = ''; // Clear comment when no item is selected
+			// Remove currentComments reset
+			// currentComments = []; // Clear comments when no item is selected
 		}
 	});
+
 	async function updateItemState(base: string, newState: ComparisonStatus) {
 		console.log(`Updating state for ${base} to ${newState}`);
 		try {
 			const db = await openDB();
+			// Only need 'stateComparison' store for this transaction
 			const tx = db.transaction('stateComparison', 'readwrite');
 			const store = tx.objectStore('stateComparison');
 			await requestToPromise(store.put({ base: base, state: newState }));
 			await transactionComplete(tx); // Ensure transaction completes
 
 			// Update the local state to reflect the change immediately
-			// Find the item and update its state
 			const itemIndex = allItems.findIndex((item) => item.base === base);
 			if (itemIndex !== -1) {
-				// Create a new array to trigger reactivity if needed, or directly mutate for $state
 				allItems[itemIndex].state = newState;
-				// If not using $state runes, you might need: allItems = [...allItems];
 			}
 			console.log(`State updated successfully for ${base}`);
 		} catch (e: any) {
 			console.error('Failed to update state in DB:', e);
 			error = `Failed to save status change: ${e.message}`;
-			// Optionally revert local state change here if DB update fails
 		}
 	}
+
+	// Function to save the comment to IndexedDB
+	async function saveComment(base: string, comment: string) {
+		console.log(`Saving comment for ${base}`);
+		try {
+			const db = await openDB();
+			const tx = db.transaction('comments', 'readwrite');
+			const store = tx.objectStore('comments');
+			await requestToPromise(store.put({ base, comment }));
+			await transactionComplete(tx);
+
+			// Update local state as well
+			const itemIndex = allItems.findIndex((item) => item.base === base);
+			if (itemIndex !== -1) {
+				allItems[itemIndex].comment = comment;
+			}
+			console.log(`Comment saved successfully for ${base}`);
+		} catch (e: any) {
+			console.error('Failed to save comment:', e);
+			error = `Failed to save comment: ${e.message}`;
+			// Optionally revert local comment state if save fails
+			// currentComment = allItems.find(item => item.base === base)?.comment || '';
+		}
+	}
+
 	async function openDB(): Promise<IDBDatabase> {
 		return new Promise((res, rej) => {
-			const req = indexedDB.open('PIBIC', 1);
+			const req = indexedDB.open('PIBIC', 1); // Version remains 1, upgrade handled below
 			req.onerror = () => rej(req.error);
 			req.onsuccess = () => res(req.result);
+			// Add onupgradeneeded to handle creation of the new store if DB exists but is older version (or first time)
+			req.onupgradeneeded = (event) => {
+				const db = (event.target as IDBOpenDBRequest).result;
+				// Check if stores exist before creating
+				if (!db.objectStoreNames.contains('pythonCode')) {
+					db.createObjectStore('pythonCode', { keyPath: 'base' });
+				}
+				if (!db.objectStoreNames.contains('pythonMeta')) {
+					db.createObjectStore('pythonMeta', { keyPath: 'base' });
+				}
+				if (!db.objectStoreNames.contains('markdown')) {
+					db.createObjectStore('markdown', { keyPath: 'base' });
+				}
+				if (!db.objectStoreNames.contains('stateComparison')) {
+					db.createObjectStore('stateComparison', { keyPath: 'base' });
+				}
+				if (!db.objectStoreNames.contains('comments')) {
+					db.createObjectStore('comments', { keyPath: 'base' }); // Create comments store
+				}
+			};
 		});
 	}
 
@@ -110,20 +161,23 @@
 			tx.onabort = () => reject(tx.error ?? new DOMException('Transaction aborted', 'AbortError'));
 		});
 	}
+
 	onMount(async () => {
 		try {
 			const db = await openDB();
+			// Add 'comments' to the transaction stores
 			const tx = db.transaction(
-				['pythonCode', 'pythonMeta', 'markdown', 'stateComparison'],
+				['pythonCode', 'pythonMeta', 'markdown', 'stateComparison', 'comments'],
 				'readonly'
 			);
 
-			// Convert IDBRequests to Promises
-			const [codes, metas, mds, states] = await Promise.all([
+			// Fetch comments along with other data
+			const [codes, metas, mds, states, commentsData] = await Promise.all([
 				requestToPromise(tx.objectStore('pythonCode').getAll()),
 				requestToPromise(tx.objectStore('pythonMeta').getAll()),
 				requestToPromise(tx.objectStore('markdown').getAll()),
-				requestToPromise(tx.objectStore('stateComparison').getAll())
+				requestToPromise(tx.objectStore('stateComparison').getAll()),
+				requestToPromise(tx.objectStore('comments').getAll()) // Fetch comments
 			]);
 
 			// combinando por `base`
@@ -132,6 +186,12 @@
 			for (const m of metas) map.get(m.base).meta = m.meta;
 			for (const m of mds) map.get(m.base).md = m.md;
 			for (const s of states) map.get(s.base).state = s.state;
+			// Add comments to the map
+			for (const c of commentsData) {
+				if (map.has(c.base)) {
+					map.get(c.base).comment = c.comment;
+				}
+			}
 			allItems = Array.from(map.values());
 		} catch (e: any) {
 			error = e.message;
@@ -163,7 +223,16 @@
 					<!-- Inner Left Column -->
 					<div class="controls-left">
 						<FileNameDisplay fileName={current.base} />
-						<CommentSection on:submit={handleCommentSubmit} />
+						<!-- Replace CommentSection with a textarea -->
+						<textarea
+							class="comment-textarea"
+							bind:value={currentComment}
+							onblur={() => saveComment(current.base, currentComment)}
+							placeholder="Adicione seu comentário aqui..."
+							rows="4"
+						></textarea>
+						<!-- Removed CommentSection -->
+						<!-- <CommentSection on:submit={handleCommentSubmit} /> -->
 					</div>
 					<!-- Inner Right Column -->
 					<div class="controls-right">
@@ -190,39 +259,34 @@
 {/if}
 
 <style>
-	/* ... existing styles for .error etc ... */
+	/* ... existing styles ... */
+	.error {
+		color: crimson;
+	}
 
 	.main-content-grid {
 		display: grid;
-		/* Define 2 columns for code/diagram, rows will be implicit or defined */
 		grid-template-columns: 1fr 1fr;
-		/* Define rows explicitly: auto for controls, auto for code/diagram */
-		/* grid-template-rows: auto auto; */ /* Often not needed if using grid-column */
 		gap: 1rem;
 		margin-top: 1rem;
 		align-items: start;
 	}
 
-	/* Controls section spans both columns */
 	.controls-section {
-		grid-column: 1 / -1; /* Span from first column line to last */
-
-		/* Keep its internal grid layout */
+		grid-column: 1 / -1;
 		display: grid;
 		grid-template-columns: 1fr auto;
 		gap: 1rem;
 		align-items: start;
 		min-width: 0;
-		margin-bottom: 1rem; /* Add space below controls */
+		margin-bottom: 1rem;
 	}
 
-	/* Code section goes in the first column (implicitly second row) */
 	.code-section {
 		grid-column: 1 / 2;
 		min-width: 0;
 	}
 
-	/* Diagram section goes in the second column (implicitly second row) */
 	.diagram-section {
 		grid-column: 2 / 3;
 		min-width: 0;
@@ -231,45 +295,47 @@
 	.controls-left {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem; /* Space between file name and comment section */
-		min-width: 0; /* Allow shrinking */
+		gap: 1rem;
+		min-width: 0;
 	}
 
 	.controls-right {
-		min-width: 150px; /* Example: Ensure status buttons have some minimum width */
+		min-width: 150px;
 	}
 
-	/* Responsive design adjustments */
+	/* Add style for the textarea */
+	.comment-textarea {
+		width: 100%; /* Take full width of its container */
+		padding: 0.5rem;
+		border: 1px solid #ccc;
+		border-radius: 4px;
+		font-family: inherit; /* Use the same font as the rest of the page */
+		font-size: 1rem;
+		box-sizing: border-box; /* Include padding and border in the element's total width and height */
+		resize: vertical; /* Allow vertical resizing */
+	}
+
 	@media (max-width: 1024px) {
-		/* Or your preferred breakpoint */
 		.main-content-grid {
-			grid-template-columns: 1fr; /* Stack code and diagram below controls */
-			/* Rows adjust automatically */
+			grid-template-columns: 1fr;
 		}
 		.controls-section {
-			grid-column: 1 / -1; /* Still span full width */
+			grid-column: 1 / -1;
 		}
 		.code-section {
-			grid-column: 1 / -1; /* Take full width */
+			grid-column: 1 / -1;
 		}
 		.diagram-section {
-			grid-column: 1 / -1; /* Take full width */
+			grid-column: 1 / -1;
 		}
-		/* Optional: Adjust internal controls layout */
-		/* .controls-section { grid-template-columns: 1fr; } */
 	}
 
 	@media (max-width: 768px) {
-		/* Stack inner controls on small screens */
 		.controls-section {
 			grid-template-columns: 1fr;
 		}
 		.controls-right {
-			min-width: auto; /* Reset min-width */
+			min-width: auto;
 		}
-	}
-
-	.error {
-		color: crimson;
 	}
 </style>
