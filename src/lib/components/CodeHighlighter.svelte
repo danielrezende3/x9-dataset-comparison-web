@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Highlight from 'svelte-highlight';
+	import Highlight, { LineNumbers } from 'svelte-highlight';
 	import python from 'svelte-highlight/languages/python';
 	import tomorrow from 'svelte-highlight/styles/atom-one-dark';
 
@@ -25,8 +25,10 @@
 
 <div class="code-wrapper">
 	<!-- Render the provided `code` string with syntax highlighting -->
-	<div class="highlight-container" style="font-size: {fontSize}px">
-		<Highlight {code} language={python} />
+	<div class="highlight-container" style="font-size: {fontSize}px;">
+		<Highlight {code} language={python} let:highlighted>
+			<LineNumbers {highlighted} hideBorder />
+		</Highlight>
 	</div>
 
 	<div class="controls">

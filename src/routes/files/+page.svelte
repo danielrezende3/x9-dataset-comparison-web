@@ -46,31 +46,49 @@
 		page = 1;
 		console.log('Filter changed, page reset to 1. New filter:', currentFilter);
 	});
+	function handleStatusChange(event: CustomEvent<ComparisonStatus>) {
+		const newStatus = event.detail;
+		if (current && current.state !== newStatus) {
+			console.log(`Status change requested for ${current.base} to ${newStatus}`);
+			// Directly update the state in the allItems array
+			const itemIndex = allItems.findIndex((item) => item.base === current.base);
+			if (itemIndex !== -1) {
+				// Create a new object to ensure reactivity triggers if needed,
+				// though modifying the property directly might work with runes.
+				// Using direct modification first for simplicity with runes:
+				allItems[itemIndex].state = newStatus;
 
+				// Trigger the DB update (which now reads from the updated allItems/current)
+				// The $effect watching `current.state` should handle the DB update.
+				// No need to call updateItemState directly here if the effect works.
+			} else {
+				console.error('Current item not found in allItems during status change');
+			}
+			// Manually update previousState here if the effect doesn't run immediately
+			// or if you remove the effect logic for state changes.
+			// previousState = newStatus;
+		}
+	}
 	$effect(() => {
 		if (current) {
-			// Update previous state and load comment when item changes or on initial load
 			if (current.base !== previousBase) {
+				console.log('Item changed. Base:', current.base);
 				previousBase = current.base;
 				previousState = current.state;
-				currentComment = current.comment || ''; // Load comment for the current item
-				// Remove fetchComments call
-				// fetchComments(current.base); // Fetch comments when item changes
+				currentComment = current.comment || '';
 			} else {
 				// Item is the same, check if state changed from the previous known state
+				// This block will now trigger after handleStatusChange updates allItems[...].state
 				if (current.state !== previousState) {
-					console.log('State changed via UI binding, attempting DB update...');
+					console.log('State changed (detected by effect), attempting DB update...');
 					updateItemState(current.base, current.state);
 					previousState = current.state; // Update previous state after successful save attempt
 				}
 			}
 		} else {
-			// Reset when there's no current item
 			previousBase = null;
 			previousState = null;
-			currentComment = ''; // Clear comment when no item is selected
-			// Remove currentComments reset
-			// currentComments = []; // Clear comments when no item is selected
+			currentComment = '';
 		}
 	});
 
@@ -324,21 +342,37 @@
 			await transactionComplete(tx);
 
 			const map = new Map<string, any>();
-			for (const c of codes) map.set(c.base, { base: c.base, code: c.code });
-			for (const m of metas) map.get(m.base).meta = m.meta;
-			for (const m of mds) map.get(m.base).md = m.md;
-			for (const s of states) map.get(s.base).state = s.state;
+			for (const c of codes) {
+				map.set(c.base, {
+					base: c.base,
+					code: c.code,
+					state: 'not-compared', // Default state
+					comment: '' // Default comment
+				});
+			}
+
+			// Apply other data
+			for (const m of metas) {
+				if (map.has(m.base)) map.get(m.base).meta = m.meta;
+			}
+			for (const m of mds) {
+				if (map.has(m.base)) map.get(m.base).md = m.md;
+			}
+			// Apply saved state (will overwrite default if found)
+			for (const s of states) {
+				if (map.has(s.base)) map.get(s.base).state = s.state;
+			}
+			// Apply saved comments (will overwrite default if found)
 			for (const c of commentsData) {
 				if (map.has(c.base)) {
 					map.get(c.base).comment = c.comment;
 				}
 			}
 			allItems = Array.from(map.values());
-			// Reset current item based on refreshed data and current page/filter
-			page = 1; // Reset page after import/refresh
-			// current derived state will update automatically
+			page = 1;
 		} catch (e: any) {
 			error = `Failed to refresh data: ${e.message}`;
+			console.error('Error during refreshAllItems:', e);
 		}
 	}
 
@@ -398,7 +432,10 @@
 					</div>
 					<!-- Inner Right Column -->
 					<div class="controls-right">
-						<ComparisonStatusButtons bind:selectedStatus={current.state} />
+						<ComparisonStatusButtons
+							selectedStatus={current.state}
+							on:changeStatus={handleStatusChange}
+						/>
 					</div>
 				</div>
 

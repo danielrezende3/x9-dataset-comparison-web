@@ -1,67 +1,56 @@
+<!-- filepath: /home/danielrezende/projects/pibic/comparison-app-2/src/lib/components/ComparisonStatusButtons.svelte -->
 <script lang="ts">
-	import type { FilterOptions } from '$lib/types/filterOptions'; // Reuse FilterOptions type
+	import { createEventDispatcher } from 'svelte';
+	import type { FilterOptions } from '$lib/types/filterOptions'; // Adjust path as needed
 
-	// Use FilterOptions excluding 'all'
 	type ComparisonStatus = Exclude<FilterOptions, 'all'>;
 
-	let { selectedStatus = $bindable() }: { selectedStatus: ComparisonStatus } = $props();
+	// Use 'export let' for props in Svelte components
+	export let selectedStatus: ComparisonStatus = 'not-compared';
 
-	// Define the possible statuses and their labels
-	const statuses: { value: ComparisonStatus; label: string }[] = [
-		{ value: 'equal', label: 'Igual' },
-		{ value: 'not-compared', label: 'Não comparado' },
-		{ value: 'different', label: 'Diferente' }
-	];
+	const dispatch = createEventDispatcher<{ changeStatus: ComparisonStatus }>();
+
+	const statuses: ComparisonStatus[] = ['not-compared', 'equal', 'different']; // Or your actual statuses
 
 	function selectStatus(status: ComparisonStatus) {
-		selectedStatus = status;
-		console.log('Selected status:', selectedStatus);
-		// Parent component will react via the binding
+		if (status !== selectedStatus) {
+			// Dispatch an event instead of modifying a bound prop
+			dispatch('changeStatus', status);
+		}
 	}
 </script>
 
-<div class="status-buttons-container">
+<div class="status-buttons">
 	{#each statuses as status}
-		<button
-			class="status-button"
-			class:active={selectedStatus === status.value}
-			onclick={() => selectStatus(status.value)}
-			aria-pressed={selectedStatus === status.value}
-		>
-			{status.label}
+		<button class:selected={selectedStatus === status} on:click={() => selectStatus(status)}>
+			{status}
+			<!-- Display status text -->
 		</button>
 	{/each}
 </div>
 
 <style>
-	.status-buttons-container {
+	.status-buttons {
 		display: flex;
-		flex-direction: column; /* Stack buttons vertically */
+		flex-direction: column; /* Or row, depending on your layout */
 		gap: 0.5rem;
 	}
-
-	.status-button {
-		padding: 0.5rem 1rem; /* Standard padding */
-		border: 1px solid #ccc; /* Standard border */
-		background-color: #f0f0f0; /* Standard background */
-		border-radius: 4px; /* Standard radius */
+	button {
+		padding: 0.5rem;
+		border: 1px solid #ccc;
+		background-color: #f0f0f0;
 		cursor: pointer;
-		font-size: 0.9rem; /* Standard font size */
-		transition:
-			background-color 0.2s,
-			border-color 0.2s;
-		color: #333; /* Standard text color */
 		text-align: center;
-		width: 100%;
 	}
-
-	.status-button:hover {
-		background-color: #e0e0e0; /* Standard hover */
-	}
-
-	.status-button.active {
-		background-color: #d0d0d0; /* Keep active distinct */
-		border-color: #aaa; /* Adjust active border */
+	button.selected {
+		background-color: #d0d0ff; /* Highlight selected */
+		border-color: #a0a0ff;
 		font-weight: bold;
+	}
+	button:hover {
+		background-color: #e0e0e0;
+	}
+	button.selected:hover {
+		background-color: #c0c0ee;
 	}
 </style>
