@@ -38,10 +38,11 @@
 			const tx = db.transaction(['pythonCode', 'pythonMeta', 'markdown'], 'readonly');
 
 			// Convert IDBRequests to Promises
-			const [codes, metas, mds] = await Promise.all([
+			const [codes, metas, mds, states] = await Promise.all([
 				requestToPromise(tx.objectStore('pythonCode').getAll()),
 				requestToPromise(tx.objectStore('pythonMeta').getAll()),
-				requestToPromise(tx.objectStore('markdown').getAll())
+				requestToPromise(tx.objectStore('markdown').getAll()),
+				requestToPromise(tx.objectStore('stateComparison').getAll())
 			]);
 
 			// combinando por `base`
@@ -49,6 +50,7 @@
 			for (const c of codes) map.set(c.base, { base: c.base, code: c.code });
 			for (const m of metas) map.get(m.base).meta = m.meta;
 			for (const m of mds) map.get(m.base).md = m.md;
+			for (const s of states) map.get(s.base).state = s.state;
 			items = Array.from(map.values());
 		} catch (e: any) {
 			error = e.message;
