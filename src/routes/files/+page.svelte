@@ -1,3 +1,4 @@
+<!-- filepath: src/routes/files/+page.svelte -->
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import Pager from '$lib/components/Pager.svelte';
@@ -8,16 +9,23 @@
 	import FileNameDisplay from '$lib/components/FileNameDisplay.svelte';
 	import ComparisonStatusButtons from '$lib/components/ComparisonStatusButtons.svelte';
 	import { goto } from '$app/navigation';
+	// Import DB functions and types
+	import {
+		updateState as dbUpdateState,
+		updateComment as dbUpdateComment,
+		getAllCombinedItems,
+		getAllStates,
+		getAllComments,
+		type CombinedItem,
+		openDB, // Still needed for direct transaction in import/export
+		requestToPromise, // Still needed for direct transaction in import/export
+		transactionComplete, // Still needed for direct transaction in import/export
+		STORE_NAMES // Still needed for direct transaction in import/export
+	} from '$lib/db';
+
 	type ComparisonStatus = Exclude<FilterOptions, 'all'>;
 	let csvImportInput: HTMLInputElement;
-	let allItems: Array<{
-		base: string;
-		code: string;
-		meta: any;
-		md: string;
-		state: ComparisonStatus;
-		comment?: string; // Add comment field
-	}> = $state([]);
+	let allItems: CombinedItem[] = $state([]); // Use CombinedItem type
 
 	let loading = $state(true);
 	let error = $state('');
@@ -26,62 +34,49 @@
 	let filteredItems = $derived(
 		allItems.filter((item) => {
 			if (currentFilter === 'all') {
-				return true; // Show all items
+				return true;
 			}
-			// Ensure item.state exists and matches the filter
-			// Treat 'not-compared' from data as a valid state for filtering
-			return item.state && item.state === currentFilter;
+			return item.state === currentFilter;
 		})
 	);
 	let totalPages = $derived(filteredItems.length);
 	let current = $derived(filteredItems[page - 1] ?? null);
 	let previousState: ComparisonStatus | null = $state(null);
 	let previousBase: string | null = $state(null);
-	// Remove currentComments state
-	// let currentComments: Comment[] = $state([]); // State for current item's comments
-	let currentComment = $state(''); // State for the single comment string
+	let currentComment = $state('');
 
 	$effect(() => {
-		// This code runs whenever currentFilter changes
 		page = 1;
 		console.log('Filter changed, page reset to 1. New filter:', currentFilter);
 	});
+
 	function handleStatusChange(event: CustomEvent<ComparisonStatus>) {
 		const newStatus = event.detail;
 		if (current && current.state !== newStatus) {
 			console.log(`Status change requested for ${current.base} to ${newStatus}`);
-			// Directly update the state in the allItems array
 			const itemIndex = allItems.findIndex((item) => item.base === current.base);
 			if (itemIndex !== -1) {
-				// Create a new object to ensure reactivity triggers if needed,
-				// though modifying the property directly might work with runes.
-				// Using direct modification first for simplicity with runes:
+				// Update local state directly (runes handle reactivity)
 				allItems[itemIndex].state = newStatus;
-
-				// Trigger the DB update (which now reads from the updated allItems/current)
-				// The $effect watching `current.state` should handle the DB update.
-				// No need to call updateItemState directly here if the effect works.
+				// The $effect below will detect the change in `current.state` and trigger DB update
 			} else {
 				console.error('Current item not found in allItems during status change');
 			}
-			// Manually update previousState here if the effect doesn't run immediately
-			// or if you remove the effect logic for state changes.
-			// previousState = newStatus;
 		}
 	}
+
 	$effect(() => {
 		if (current) {
 			if (current.base !== previousBase) {
 				console.log('Item changed. Base:', current.base);
 				previousBase = current.base;
 				previousState = current.state;
-				currentComment = current.comment || '';
+				currentComment = current.comment || ''; // Load comment for new item
 			} else {
-				// Item is the same, check if state changed from the previous known state
-				// This block will now trigger after handleStatusChange updates allItems[...].state
+				// Item is the same, check if state changed
 				if (current.state !== previousState) {
 					console.log('State changed (detected by effect), attempting DB update...');
-					updateItemState(current.base, current.state);
+					updateItemState(current.base, current.state); // Call DB update function
 					previousState = current.state; // Update previous state after successful save attempt
 				}
 			}
@@ -92,37 +87,26 @@
 		}
 	});
 
+	// Use the imported DB function
 	async function updateItemState(base: string, newState: ComparisonStatus) {
 		console.log(`Updating state for ${base} to ${newState}`);
 		try {
-			const db = await openDB();
-			// Only need 'stateComparison' store for this transaction
-			const tx = db.transaction('stateComparison', 'readwrite');
-			const store = tx.objectStore('stateComparison');
-			await requestToPromise(store.put({ base: base, state: newState }));
-			await transactionComplete(tx); // Ensure transaction completes
-
-			// Update the local state to reflect the change immediately
-			const itemIndex = allItems.findIndex((item) => item.base === base);
-			if (itemIndex !== -1) {
-				allItems[itemIndex].state = newState;
-			}
+			await dbUpdateState(base, newState); // Use imported function
 			console.log(`State updated successfully for ${base}`);
+			// No need to update local state here, it was updated in handleStatusChange
 		} catch (e: any) {
 			console.error('Failed to update state in DB:', e);
 			error = `Failed to save status change: ${e.message}`;
+			// Optionally revert local state if DB update fails
+			// refreshAllItems(); // Or find and revert the specific item
 		}
 	}
 
-	// Function to save the comment to IndexedDB
+	// Use the imported DB function
 	async function saveComment(base: string, comment: string) {
 		console.log(`Saving comment for ${base}`);
 		try {
-			const db = await openDB();
-			const tx = db.transaction('comments', 'readwrite');
-			const store = tx.objectStore('comments');
-			await requestToPromise(store.put({ base, comment }));
-			await transactionComplete(tx);
+			await dbUpdateComment(base, comment); // Use imported function
 
 			// Update local state as well
 			const itemIndex = allItems.findIndex((item) => item.base === base);
@@ -138,63 +122,18 @@
 		}
 	}
 
-	async function openDB(): Promise<IDBDatabase> {
-		return new Promise((res, rej) => {
-			const req = indexedDB.open('PIBIC', 1); // Version remains 1, upgrade handled below
-			req.onerror = () => rej(req.error);
-			req.onsuccess = () => res(req.result);
-			// Add onupgradeneeded to handle creation of the new store if DB exists but is older version (or first time)
-			req.onupgradeneeded = (event) => {
-				const db = (event.target as IDBOpenDBRequest).result;
-				// Check if stores exist before creating
-				if (!db.objectStoreNames.contains('pythonCode')) {
-					db.createObjectStore('pythonCode', { keyPath: 'base' });
-				}
-				if (!db.objectStoreNames.contains('pythonMeta')) {
-					db.createObjectStore('pythonMeta', { keyPath: 'base' });
-				}
-				if (!db.objectStoreNames.contains('markdown')) {
-					db.createObjectStore('markdown', { keyPath: 'base' });
-				}
-				if (!db.objectStoreNames.contains('stateComparison')) {
-					db.createObjectStore('stateComparison', { keyPath: 'base' });
-				}
-				if (!db.objectStoreNames.contains('comments')) {
-					db.createObjectStore('comments', { keyPath: 'base' }); // Create comments store
-				}
-			};
-		});
-	}
+	// Removed local openDB, requestToPromise, transactionComplete
 
-	// Helper to convert IDBRequest to Promise
-	function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
-		return new Promise((resolve, reject) => {
-			request.onsuccess = () => resolve(request.result);
-			request.onerror = () => reject(request.error);
-		});
-	}
-	function transactionComplete(tx: IDBTransaction): Promise<void> {
-		return new Promise((resolve, reject) => {
-			tx.oncomplete = () => resolve();
-			tx.onerror = () => reject(tx.error);
-			tx.onabort = () => reject(tx.error ?? new DOMException('Transaction aborted', 'AbortError'));
-		});
-	}
 	function sendAnotherZip() {
-		goto('/'); // Navigate to the root page
+		goto('/');
 	}
 
-	// Function to trigger CSV export
+	// Use imported DB functions for export
 	async function exportCsv() {
-		error = ''; // Clear previous errors
+		error = '';
 		try {
-			const db = await openDB();
-			const tx = db.transaction(['stateComparison', 'comments'], 'readonly');
-			const [states, commentsData] = await Promise.all([
-				requestToPromise(tx.objectStore('stateComparison').getAll()),
-				requestToPromise(tx.objectStore('comments').getAll())
-			]);
-			await transactionComplete(tx);
+			// Fetch data using specific functions
+			const [states, commentsData] = await Promise.all([getAllStates(), getAllComments()]);
 
 			const stateMap = new Map(states.map((s) => [s.base, s.state]));
 			const commentMap = new Map(commentsData.map((c) => [c.base, c.comment]));
@@ -202,13 +141,13 @@
 
 			let csvContent = 'base,state,comment\n';
 			for (const base of allBases) {
-				const state = stateMap.get(base) || 'not-compared'; // Default state if missing
+				const state = stateMap.get(base) || 'not-compared';
 				const comment = commentMap.get(base) || '';
-				// Escape commas and quotes in comment
 				const escapedComment = `"${comment.replace(/"/g, '""')}"`;
 				csvContent += `${base},${state},${escapedComment}\n`;
 			}
 
+			// Blob creation and download logic remains the same
 			const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
 			const link = document.createElement('a');
 			const url = URL.createObjectURL(blob);
@@ -225,27 +164,24 @@
 		}
 	}
 
-	// Function to trigger the hidden file input
 	function triggerCsvImport() {
-		error = ''; // Clear previous errors
+		error = '';
 		csvImportInput.click();
 	}
 
-	// Function to handle the selected CSV file
+	// Use imported DB functions for import (still needs direct transaction for bulk)
 	async function handleCsvImport(event: Event) {
 		const input = event.target as HTMLInputElement;
-		if (!input.files || input.files.length === 0) {
-			return;
-		}
+		if (!input.files || input.files.length === 0) return;
 		const file = input.files[0];
-		input.value = ''; // Reset input for same-file selection
+		input.value = '';
 
 		if (!file.name.endsWith('.csv')) {
 			error = 'Por favor selecione um arquivo CSV.';
 			return;
 		}
 
-		loading = true; // Show loading indicator
+		loading = true;
 		error = '';
 
 		try {
@@ -257,20 +193,20 @@
 			}
 
 			const db = await openDB();
-			// Use separate transactions for safety or a single one if atomicity is crucial
-			const stateTx = db.transaction('stateComparison', 'readwrite');
-			const commentTx = db.transaction('comments', 'readwrite');
-			const stateStore = stateTx.objectStore('stateComparison');
-			const commentStore = commentTx.objectStore('comments');
+			// Use a single transaction for atomicity during import
+			const tx = db.transaction([STORE_NAMES.STATE, STORE_NAMES.COMMENTS], 'readwrite');
+			const stateStore = tx.objectStore(STORE_NAMES.STATE);
+			const commentStore = tx.objectStore(STORE_NAMES.COMMENTS);
 
 			const updatePromises: Promise<any>[] = [];
-
 			const validStates: Set<ComparisonStatus> = new Set(['not-compared', 'equal', 'different']);
 
-			for (let i = 1; i < lines.length; i++) {
-				if (!lines[i]) continue; // Skip empty lines
+			// Fetch current bases to validate against
+			const currentBases = new Set(allItems.map((item) => item.base));
 
-				// Basic CSV parsing (assumes commas only as delimiters, quoted comments)
+			for (let i = 1; i < lines.length; i++) {
+				if (!lines[i]) continue;
+
 				const parts = lines[i].split(',');
 				if (parts.length < 2) {
 					console.warn(`Skipping invalid line ${i + 1}: ${lines[i]}`);
@@ -278,43 +214,37 @@
 				}
 				const base = parts[0].trim();
 				const state = parts[1].trim() as ComparisonStatus;
-				// Join remaining parts for comment, remove surrounding quotes if present
 				let comment = parts.slice(2).join(',');
 				if (comment.startsWith('"') && comment.endsWith('"')) {
 					comment = comment.substring(1, comment.length - 1);
 				}
-				// Unescape double quotes
 				comment = comment.replace(/""/g, '"');
 
 				if (!base) {
 					console.warn(`Skipping line ${i + 1} due to missing base.`);
 					continue;
 				}
-
-				// Validate state
 				if (!validStates.has(state)) {
 					console.warn(`Skipping line ${i + 1} due to invalid state: ${state}`);
-					continue; // Skip if state is not valid
+					continue;
 				}
-
-				// Check if base exists in the current items (optional, but good practice)
-				const existingItem = allItems.find((item) => item.base === base);
-				if (!existingItem) {
+				// Check if base exists in the current dataset loaded from the zip
+				if (!currentBases.has(base)) {
 					console.warn(`Skipping line ${i + 1} as base "${base}" not found in current dataset.`);
 					continue;
 				}
 
-				// Add update operations to promises
+				// Add put operations to the transaction (don't await individually)
 				updatePromises.push(requestToPromise(stateStore.put({ base, state })));
 				updatePromises.push(requestToPromise(commentStore.put({ base, comment })));
 			}
 
-			// Wait for all DB updates and transactions to complete
+			// Wait for all puts within the transaction
 			await Promise.all(updatePromises);
-			await Promise.all([transactionComplete(stateTx), transactionComplete(commentTx)]);
+			// Wait for the transaction itself to complete
+			await transactionComplete(tx);
 
-			// Refresh data from DB to show changes
-			await refreshAllItems();
+			await refreshAllItems(); // Refresh data from DB
 			console.log('CSV importado com sucesso.');
 		} catch (e: any) {
 			console.error('Falha ao importar CSV:', e);
@@ -324,65 +254,28 @@
 		}
 	}
 
-	// Helper function to reload all items from DB
+	// Use the combined fetch function
 	async function refreshAllItems() {
+		console.log('Refreshing all items from DB...');
 		try {
-			const db = await openDB();
-			const tx = db.transaction(
-				['pythonCode', 'pythonMeta', 'markdown', 'stateComparison', 'comments'],
-				'readonly'
-			);
-			const [codes, metas, mds, states, commentsData] = await Promise.all([
-				requestToPromise(tx.objectStore('pythonCode').getAll()),
-				requestToPromise(tx.objectStore('pythonMeta').getAll()),
-				requestToPromise(tx.objectStore('markdown').getAll()),
-				requestToPromise(tx.objectStore('stateComparison').getAll()),
-				requestToPromise(tx.objectStore('comments').getAll())
-			]);
-			await transactionComplete(tx);
-
-			const map = new Map<string, any>();
-			for (const c of codes) {
-				map.set(c.base, {
-					base: c.base,
-					code: c.code,
-					state: 'not-compared', // Default state
-					comment: '' // Default comment
-				});
-			}
-
-			// Apply other data
-			for (const m of metas) {
-				if (map.has(m.base)) map.get(m.base).meta = m.meta;
-			}
-			for (const m of mds) {
-				if (map.has(m.base)) map.get(m.base).md = m.md;
-			}
-			// Apply saved state (will overwrite default if found)
-			for (const s of states) {
-				if (map.has(s.base)) map.get(s.base).state = s.state;
-			}
-			// Apply saved comments (will overwrite default if found)
-			for (const c of commentsData) {
-				if (map.has(c.base)) {
-					map.get(c.base).comment = c.comment;
-				}
-			}
-			allItems = Array.from(map.values());
-			page = 1;
+			allItems = await getAllCombinedItems(); // Use the new function
+			page = 1; // Reset page after refresh
+			console.log(`Refreshed ${allItems.length} items.`);
 		} catch (e: any) {
 			error = `Failed to refresh data: ${e.message}`;
 			console.error('Error during refreshAllItems:', e);
+			allItems = []; // Clear items on error
 		}
 	}
 
 	onMount(async () => {
 		loading = true;
-		await refreshAllItems(); // Use the refresh function on mount
+		await refreshAllItems();
 		loading = false;
 	});
 </script>
 
+<!-- HTML structure remains the same -->
 {#if loading}
 	<p>Carregando arquivos…</p>
 {:else if error}
@@ -414,12 +307,9 @@
 
 		{#if current}
 			<div class="main-content-grid">
-				<!-- Moved Controls Section to the top -->
 				<div class="controls-section">
-					<!-- Inner Left Column -->
 					<div class="controls-left">
 						<FileNameDisplay fileName={current.base} />
-						<!-- Replace CommentSection with a textarea -->
 						<textarea
 							class="comment-textarea"
 							bind:value={currentComment}
@@ -427,10 +317,7 @@
 							placeholder="Adicione seu comentário aqui..."
 							rows="4"
 						></textarea>
-						<!-- Removed CommentSection -->
-						<!-- <CommentSection on:submit={handleCommentSubmit} /> -->
 					</div>
-					<!-- Inner Right Column -->
 					<div class="controls-right">
 						<ComparisonStatusButtons
 							selectedStatus={current.state}
@@ -439,12 +326,10 @@
 					</div>
 				</div>
 
-				<!-- Code Section (now second item) -->
 				<div class="code-section">
 					<CodeHighlighter code={current.code} />
 				</div>
 
-				<!-- Diagram Section (now third item) -->
 				<div class="diagram-section">
 					<PanZoomMermaid diagram={current.md} />
 				</div>
@@ -457,6 +342,7 @@
 	<p>Nenhum item para exibir.</p>
 {/if}
 
+<!-- Styles remain the same -->
 <style>
 	:root {
 		--button-padding: 0.5rem 1rem;

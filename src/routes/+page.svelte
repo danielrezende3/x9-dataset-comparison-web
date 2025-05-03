@@ -1,10 +1,9 @@
+<!-- filepath: src/routes/+page.svelte -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import type { Markdown } from '$lib/types/markdown';
-	import type { PythonCode } from '$lib/types/pythonCode';
-	import type { PythonMeta } from '$lib/types/pythonMeta';
-	import type { stateComparison } from '$lib/types/stateComparison';
 	import JSZip from 'jszip';
+	// Import DB functions
+	import { resetDB, transactionComplete, openDB, STORE_NAMES } from '$lib/db';
 
 	// Bind targets
 	let uploadArea: HTMLElement;
@@ -15,14 +14,15 @@
 	let loading = $state(false);
 	let success = $state(false);
 
-	// Data interfaces
-
 	// Main handler
 	async function handleZip(file: File): Promise<void> {
 		resetState();
 		try {
 			validateFile(file);
 			loading = true;
+
+			// Reset the database before processing the new zip
+			await resetDB(); // Use the imported resetDB function
 
 			const zip = await JSZip.loadAsync(file);
 			const entries = getFileEntries(zip);
@@ -115,13 +115,13 @@
 			.map(([base]) => base);
 	}
 
-	// Store files into IndexedDB
+	// Store files into IndexedDB using imported functions
 	async function storeZipContents(map: Map<string, Set<string>>, zip: JSZip): Promise<void> {
-		const db = await resetDB();
+		const db = await openDB(); // Ensure DB is open
 
-		// Process one base at a time with a new transaction for each
+		// Process one base at a time
 		for (const base of map.keys()) {
-			// First fetch all file contents
+			// Fetch all file contents for the current base
 			const [codeTxt, metaTxt, mdTxt] = await Promise.all([
 				zip.file(`${base}.py`)!.async('text'),
 				zip.file(`${base}.py.json`)!.async('text'),
@@ -133,47 +133,28 @@
 			const trimmedMd =
 				mdLines.length > 2 ? mdLines.slice(1, mdLines.length - 1).join('\n') : mdTxt;
 
-			// Then create a new transaction and immediately use it
-			const tx = db.transaction(
-				['pythonCode', 'pythonMeta', 'markdown', 'stateComparison'],
-				'readwrite'
-			);
+			// Use a single transaction for all puts related to this base
+			const tx = db.transaction(Object.values(STORE_NAMES), 'readwrite');
+			const codeStore = tx.objectStore(STORE_NAMES.CODE);
+			const metaStore = tx.objectStore(STORE_NAMES.META);
+			const mdStore = tx.objectStore(STORE_NAMES.MARKDOWN);
+			const stateStore = tx.objectStore(STORE_NAMES.STATE);
 
-			tx.objectStore('pythonCode').put({ base, code: codeTxt } as PythonCode);
-			tx.objectStore('pythonMeta').put({ base, meta: JSON.parse(metaTxt) } as PythonMeta);
-			tx.objectStore('markdown').put({ base, md: trimmedMd } as Markdown);
-			tx.objectStore('stateComparison').put({ base, state: 'not-compared' } as stateComparison);
-			// Wait for this transaction to complete before moving to the next base
-			await new Promise((resolve, reject) => {
-				tx.oncomplete = () => resolve(undefined);
-				tx.onerror = () => reject(tx.error);
-			});
+			// Add puts to the transaction (no need to await individual puts)
+			codeStore.put({ base, code: codeTxt });
+			metaStore.put({ base, meta: JSON.parse(metaTxt) });
+			mdStore.put({ base, md: trimmedMd });
+			stateStore.put({ base, state: 'not-compared' });
+
+			// Wait for the transaction for this base to complete
+			await transactionComplete(tx);
+			console.log(`Stored data for base: ${base}`);
 		}
 	}
 
-	// Delete and recreate the PIBIC DB
-	function resetDB(): Promise<IDBDatabase> {
-		const name = 'PIBIC';
-		return new Promise((resolve, reject) => {
-			const delReq = indexedDB.deleteDatabase(name);
-			delReq.onerror = () => reject(delReq.error);
-			delReq.onsuccess = () => {
-				const openReq = indexedDB.open(name, 1);
-				openReq.onupgradeneeded = () => {
-					const db = openReq.result;
-					db.createObjectStore('pythonCode', { keyPath: 'base' });
-					db.createObjectStore('pythonMeta', { keyPath: 'base' });
-					db.createObjectStore('markdown', { keyPath: 'base' });
-					db.createObjectStore('stateComparison', { keyPath: 'base' });
-					db.createObjectStore('comments', { keyPath: 'base' }); // Add this line
-				};
-				openReq.onsuccess = () => resolve(openReq.result);
-				openReq.onerror = () => reject(openReq.error);
-			};
-		});
-	}
+	// Removed local resetDB, openDB, requestToPromise, transactionComplete
 
-	// Drag & drop and file picker handlers
+	// Drag & drop and file picker handlers (remain the same)
 	function openFilePicker(): void {
 		fileInput.click();
 	}
@@ -205,6 +186,7 @@
 	}
 </script>
 
+<!-- HTML remains the same -->
 <div
 	bind:this={uploadArea}
 	class="upload-area"
@@ -230,6 +212,7 @@
 	<p class="message success">Upload e inicialização concluídos!</p>
 {/if}
 
+<!-- Style remains the same -->
 <style>
 	.upload-area {
 		border: 2px dashed #aaa;
