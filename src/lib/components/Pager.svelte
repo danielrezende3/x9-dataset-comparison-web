@@ -27,16 +27,22 @@
 		gap: 0.5rem;
 	}
 	.pager button {
-		background: #fff;
-		border: 1px solid #ccc;
-		padding: 0.5em 1em;
-		font: inherit;
-		cursor: pointer;
-		border-radius: 4px;
+		/* Use similar properties as the base style */
+		padding: 0.5rem 1rem; /* Or use var(--button-padding) if :root vars are accessible */
+		border: 1px solid #ccc; /* Or var(--button-border) */
+		background-color: #f0f0f0; /* Or var(--button-bg) */
+		border-radius: 4px; /* Or var(--button-radius) */
+		color: #333; /* Or var(--button-text-color) */
+		font-size: 0.9rem; /* Or var(--button-font-size) */
+		cursor: pointer; /* Or var(--button-cursor) */
+		transition: background-color 0.2s;
+	}
+	.pager button:hover:not(:disabled) {
+		background-color: #e0e0e0; /* Or var(--button-bg-hover) */
 	}
 	.pager button:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
+		opacity: 0.6; /* Or var(--button-opacity-disabled) */
+		cursor: not-allowed; /* Or var(--button-cursor-disabled) */
 	}
 	.status {
 		text-align: center;

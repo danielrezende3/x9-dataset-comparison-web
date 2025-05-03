@@ -354,19 +354,21 @@
 {:else if error}
 	<p class="error">{error}</p>
 {:else if allItems.length > 0}
-	<div class="action-buttons">
-		<button onclick={sendAnotherZip}>Enviar outro zip</button>
-		<button onclick={exportCsv}>Exportar csv</button>
-		<button onclick={triggerCsvImport}>Importar csv</button>
-		<input
-			type="file"
-			accept=".csv"
-			bind:this={csvImportInput}
-			onchange={handleCsvImport}
-			style="display: none;"
-		/>
+	<div class="top-controls-wrapper">
+		<FilterButtons bind:selectedFilter={currentFilter} />
+		<div class="action-buttons">
+			<button onclick={sendAnotherZip}>Enviar outro zip</button>
+			<button onclick={exportCsv}>Exportar csv</button>
+			<button onclick={triggerCsvImport}>Importar csv</button>
+			<input
+				type="file"
+				accept=".csv"
+				bind:this={csvImportInput}
+				onchange={handleCsvImport}
+				style="display: none;"
+			/>
+		</div>
 	</div>
-	<FilterButtons bind:selectedFilter={currentFilter} />
 
 	{#if filteredItems.length > 0}
 		<Pager
@@ -419,6 +421,18 @@
 {/if}
 
 <style>
+	:root {
+		--button-padding: 0.5rem 1rem;
+		--button-border: 1px solid #ccc;
+		--button-radius: 4px;
+		--button-bg: #f0f0f0;
+		--button-bg-hover: #e0e0e0;
+		--button-text-color: #333;
+		--button-font-size: 0.9rem;
+		--button-cursor: pointer;
+		--button-cursor-disabled: not-allowed;
+		--button-opacity-disabled: 0.6;
+	}
 	/* ... existing styles ... */
 	.error {
 		color: crimson;
@@ -497,5 +511,37 @@
 		.controls-right {
 			min-width: auto;
 		}
+	}
+	.top-controls-wrapper {
+		display: flex;
+		justify-content: space-between; /* Pushes items to ends */
+		align-items: center; /* Vertically align items */
+		margin-bottom: 1rem; /* Keep the margin */
+		flex-wrap: wrap; /* Allow wrapping on smaller screens */
+		gap: 1rem; /* Add gap between filter and action buttons if they wrap */
+	}
+	.action-buttons {
+		display: flex; /* Keep buttons in a row */
+		gap: 1rem; /* Space between action buttons */
+		flex-wrap: wrap; /* Allow action buttons themselves to wrap */
+	}
+	.action-buttons button {
+		padding: var(--button-padding);
+		border: var(--button-border);
+		background-color: var(--button-bg);
+		border-radius: var(--button-radius);
+		color: var(--button-text-color);
+		font-size: var(--button-font-size);
+		cursor: var(--button-cursor);
+		transition: background-color 0.2s;
+	}
+
+	.action-buttons button:hover {
+		background-color: var(--button-bg-hover);
+	}
+
+	.action-buttons button:disabled {
+		cursor: var(--button-cursor-disabled);
+		opacity: var(--button-opacity-disabled);
 	}
 </style>

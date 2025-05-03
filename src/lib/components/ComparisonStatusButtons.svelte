@@ -41,27 +41,27 @@
 	}
 
 	.status-button {
-		padding: 0.75rem 1rem; /* Slightly larger padding */
-		border: 2px solid #555;
-		background-color: #f0f0f0;
-		border-radius: 8px;
+		padding: 0.5rem 1rem; /* Standard padding */
+		border: 1px solid #ccc; /* Standard border */
+		background-color: #f0f0f0; /* Standard background */
+		border-radius: 4px; /* Standard radius */
 		cursor: pointer;
-		font-size: 1rem; /* Slightly larger font */
+		font-size: 0.9rem; /* Standard font size */
 		transition:
 			background-color 0.2s,
 			border-color 0.2s;
-		color: #333;
+		color: #333; /* Standard text color */
 		text-align: center;
-		width: 100%; /* Make buttons fill container width */
+		width: 100%;
 	}
 
 	.status-button:hover {
-		background-color: #e0e0e0;
+		background-color: #e0e0e0; /* Standard hover */
 	}
 
 	.status-button.active {
-		background-color: #d0d0d0;
-		border-color: #333;
+		background-color: #d0d0d0; /* Keep active distinct */
+		border-color: #aaa; /* Adjust active border */
 		font-weight: bold;
 	}
 </style>
