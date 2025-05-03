@@ -1,104 +1,127 @@
-<!-- filepath: src/routes/+page.svelte -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import JSZip from 'jszip';
-	// Import DB functions
+	// Importação de funções do banco de dados
 	import { resetDB, transactionComplete, openDB, STORE_NAMES } from '$lib/db';
 
-	// Bind targets
+	// Referências a elementos do DOM
 	let uploadArea: HTMLElement;
 	let fileInput: HTMLInputElement;
 
-	// Reactive state
+	// Estados reativos
 	let error = $state<string>('');
 	let loading = $state(false);
 	let success = $state(false);
+	let loadingMessage = $state('Carregando...');
+	let selectedFileName = $state<string | null>(null);
 
-	// Main handler
+	/**
+	 * handleZip: processa o arquivo ZIP enviado pelo usuário.
+	 */
 	async function handleZip(file: File): Promise<void> {
 		resetState();
+		selectedFileName = file.name;
+
 		try {
 			validateFile(file);
 			loading = true;
+			loadingMessage = 'Validando arquivo...';
 
-			// Reset the database before processing the new zip
-			await resetDB(); // Use the imported resetDB function
+			if (!confirm(`Uploading "${file.name}" will replace all existing data. Continue?`)) {
+				resetState();
+				return;
+			}
 
+			loadingMessage = 'Limpando dados antigos...';
+			await resetDB();
+
+			loadingMessage = 'Lendo arquivo ZIP...';
 			const zip = await JSZip.loadAsync(file);
 			const entries = getFileEntries(zip);
 
-			// Ensure only allowed extensions
+			loadingMessage = 'Verificando estrutura do ZIP...';
 			const invalidFiles = entries.filter((name) => !/^(.*)\.(py\.json|py\.py|py|md)$/.test(name));
 			if (invalidFiles.length) {
 				throw new Error(
-					`Extensões inválidas encontradas, São permitidos apenas ".py", ".py.py", ".md" e ".py.json".`
+					`Arquivos com extensões não permitidas encontrados: ${invalidFiles.join(', ')}. Apenas .py, .py.py, .md e .py.json são aceitos.`
 				);
 			}
 
 			const map = mapBaseToExt(entries);
 			const missing = getMissingBases(map);
 			if (missing.length) {
-				throw new Error(`Faltam versões para: ${missing.join(', ')}`);
+				throw new Error(
+					`O ZIP está incompleto. Cada item deve ter arquivos .py, .py.json e .md. Faltam arquivos para: ${missing.join(', ')}`
+				);
 			}
 
+			loadingMessage = 'Armazenando dados...';
 			await storeZipContents(map, zip);
+
 			success = true;
+			loadingMessage = 'Carregamento concluído!';
+			await new Promise((resolve) => setTimeout(resolve, 1000));
 			goto('/files');
 		} catch (err: any) {
 			console.error(err);
-			error = err.message || 'Erro ao processar ZIP.';
+			error = err.message || 'Erro desconhecido ao processar o arquivo ZIP.';
+			selectedFileName = null;
 		} finally {
 			loading = false;
-			uploadArea.classList.remove('drag-over');
+			uploadArea?.classList.remove('drag-over');
 		}
 	}
 
-	// Reset UI state
+	/**
+	 * resetState: redefine estados de erro, sucesso e carregamento.
+	 */
 	function resetState(): void {
 		error = '';
 		success = false;
+		loading = false;
+		selectedFileName = null;
+		loadingMessage = 'Carregando...';
 	}
 
-	// Validate file size & type
+	/**
+	 * validateFile: verifica tamanho e tipo do arquivo.
+	 */
 	function validateFile(file: File): void {
 		if (file.size > 50 * 1024 * 1024) throw new Error('O arquivo ZIP excede 50 MB.');
 		if (!file.name.endsWith('.zip')) throw new Error('Por favor selecione um arquivo ZIP.');
 	}
 
-	// List all non-directory entries
+	/**
+	 * getFileEntries: retorna lista de arquivos não-diretório no ZIP.
+	 */
 	function getFileEntries(zip: JSZip): string[] {
 		return Object.values(zip.files)
 			.filter((f) => !f.dir)
 			.map((f) => f.name);
 	}
 
-	// Map baseName → set of extensions found
+	/**
+	 * mapBaseToExt: mapeia baseName para conjunto de extensões encontradas.
+	 */
 	function mapBaseToExt(names: string[]): Map<string, Set<string>> {
 		const map = new Map<string, Set<string>>();
 		for (const name of names) {
-			// Handle path separators by extracting just the filename
 			const filename = name.split('/').pop()!;
-
 			let base, ext;
 
 			if (filename.endsWith('.py.json')) {
-				// Handle filename.py.json
-				base = filename.substring(0, filename.length - 8);
+				base = filename.slice(0, -8);
 				ext = 'py.json';
 			} else if (filename.endsWith('.py.py')) {
-				// Handle filename.py.py
-				base = filename.substring(0, filename.length - 6);
+				base = filename.slice(0, -6);
 				ext = 'py.py';
 			} else if (filename.endsWith('.py')) {
-				// Handle filename.py
-				base = filename.substring(0, filename.length - 3);
+				base = filename.slice(0, -3);
 				ext = 'py';
 			} else if (filename.endsWith('.md')) {
-				// Handle filename.md
-				base = filename.substring(0, filename.length - 3);
+				base = filename.slice(0, -3);
 				ext = 'md';
 			} else {
-				console.log(`Skipping file with unknown extension: ${filename}`);
 				continue;
 			}
 
@@ -108,76 +131,89 @@
 		return map;
 	}
 
-	// Find bases missing any of the three required files
+	/**
+	 * getMissingBases: identifica baseNames sem todos os arquivos obrigatórios.
+	 */
 	function getMissingBases(map: Map<string, Set<string>>): string[] {
 		return Array.from(map.entries())
 			.filter(([_, exts]) => !exts.has('py') || !exts.has('py.json') || !exts.has('md'))
 			.map(([base]) => base);
 	}
 
-	// Store files into IndexedDB using imported functions
+	/**
+	 * storeZipContents: armazena conteúdos do ZIP no IndexedDB.
+	 */
 	async function storeZipContents(map: Map<string, Set<string>>, zip: JSZip): Promise<void> {
-		const db = await openDB(); // Ensure DB is open
+		const db = await openDB();
 
-		// Process one base at a time
 		for (const base of map.keys()) {
-			// Fetch all file contents for the current base
 			const [codeTxt, metaTxt, mdTxt] = await Promise.all([
 				zip.file(`${base}.py`)!.async('text'),
 				zip.file(`${base}.py.json`)!.async('text'),
 				zip.file(`${base}.md`)!.async('text')
 			]);
 
-			// Remove first and last line from markdown
 			const mdLines = mdTxt.split('\n');
-			const trimmedMd =
-				mdLines.length > 2 ? mdLines.slice(1, mdLines.length - 1).join('\n') : mdTxt;
+			const trimmedMd = mdLines.length > 2 ? mdLines.slice(1, -1).join('\n') : mdTxt;
 
-			// Use a single transaction for all puts related to this base
 			const tx = db.transaction(Object.values(STORE_NAMES), 'readwrite');
 			const codeStore = tx.objectStore(STORE_NAMES.CODE);
 			const metaStore = tx.objectStore(STORE_NAMES.META);
 			const mdStore = tx.objectStore(STORE_NAMES.MARKDOWN);
 			const stateStore = tx.objectStore(STORE_NAMES.STATE);
 
-			// Add puts to the transaction (no need to await individual puts)
 			codeStore.put({ base, code: codeTxt });
 			metaStore.put({ base, meta: JSON.parse(metaTxt) });
 			mdStore.put({ base, md: trimmedMd });
 			stateStore.put({ base, state: 'not-compared' });
 
-			// Wait for the transaction for this base to complete
 			await transactionComplete(tx);
 			console.log(`Stored data for base: ${base}`);
 		}
 	}
 
-	// Removed local resetDB, openDB, requestToPromise, transactionComplete
-
-	// Drag & drop and file picker handlers (remain the same)
+	/**
+	 * openFilePicker: abre o seletor de arquivos.
+	 */
 	function openFilePicker(): void {
 		fileInput.click();
 	}
 
+	/**
+	 * onFileSelected: trata seleção via input de arquivo.
+	 */
 	function onFileSelected(e: Event): void {
 		const files = (e.target as HTMLInputElement).files;
 		if (files?.length) handleZip(files[0]);
 	}
 
+	/**
+	 * onDragOver: aplica estilo durante arraste sobre área.
+	 */
 	function onDragOver(e: DragEvent): void {
 		e.preventDefault();
 		uploadArea.classList.add('drag-over');
 	}
 
+	/**
+	 * onDragLeave: remove estilo após arraste sair da área.
+	 */
 	function onDragLeave(): void {
 		uploadArea.classList.remove('drag-over');
 	}
 
+	/**
+	 * onDrop: trata arquivo largado na área.
+	 */
 	function onDrop(e: DragEvent): void {
 		e.preventDefault();
 		const files = e.dataTransfer?.files;
 		if (files?.length) handleZip(files[0]);
 	}
+
+	/**
+	 * onKeyDown: abre seletor ao pressionar Enter ou Espaço.
+	 */
 	function onKeyDown(event: KeyboardEvent): void {
 		if (event.key === 'Enter' || event.key === ' ') {
 			event.preventDefault();
@@ -186,12 +222,17 @@
 	}
 </script>
 
-<!-- HTML remains the same -->
+<p>
+	Faça upload de um arquivo ZIP contendo os arquivos .py, .py.json e .md para cada item a ser
+	comparado.
+</p>
+<p>Se você já fez o upload pro banco, <a href="/files">clique aqui</a></p>
 <div
 	bind:this={uploadArea}
 	class="upload-area"
 	role="button"
 	tabindex="0"
+	aria-describedby="upload-instructions"
 	onclick={openFilePicker}
 	ondragover={onDragOver}
 	ondragleave={onDragLeave}
@@ -199,17 +240,25 @@
 	onkeydown={onKeyDown}
 >
 	{#if loading}
-		<p>Carregando…</p>
+		<p>{loadingMessage}</p>
+		<!-- Optional: Add a spinner SVG or component here -->
+	{:else if selectedFileName}
+		<p>Arquivo selecionado: <strong>{selectedFileName}</strong></p>
+		<p>Arraste outro arquivo ou clique para substituir.</p>
 	{:else}
-		<p>Drag and drop zip file,<br />or click here to select file</p>
+		<p id="upload-instructions">
+			Arraste e solte o arquivo ZIP aqui,<br />ou clique para selecionar.
+		</p>
 	{/if}
 	<input bind:this={fileInput} class="hidden" type="file" accept=".zip" onchange={onFileSelected} />
 </div>
 
+<!-- Add aria-live for feedback messages -->
 {#if error}
-	<p class="message error">{error}</p>
-{:else if success}
-	<p class="message success">Upload e inicialização concluídos!</p>
+	<p class="message error" role="alert">{error}</p>
+{:else if success && !loading}
+	<!-- Show success only briefly before redirect -->
+	<p class="message success" role="status">{loadingMessage}</p>
 {/if}
 
 <!-- Style remains the same -->
@@ -222,7 +271,16 @@
 		cursor: pointer;
 		transition: border-color 0.2s;
 	}
-
+	.upload-area p {
+		/* Add some margin between lines if needed */
+		margin-bottom: 0.5rem;
+	}
+	.upload-area p:last-child {
+		margin-bottom: 0;
+	}
+	strong {
+		font-weight: bold;
+	}
 	.hidden {
 		display: none;
 	}

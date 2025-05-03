@@ -24,7 +24,7 @@
 	} from '$lib/db';
 
 	type ComparisonStatus = Exclude<FilterOptions, 'all'>;
-	let csvImportInput: HTMLInputElement;
+	let csvImportInput: HTMLInputElement | null = $state(null);
 	let allItems: CombinedItem[] = $state([]); // Use CombinedItem type
 
 	let loading = $state(true);
@@ -166,7 +166,7 @@
 
 	function triggerCsvImport() {
 		error = '';
-		csvImportInput.click();
+		csvImportInput?.click();
 	}
 
 	// Use imported DB functions for import (still needs direct transaction for bulk)
