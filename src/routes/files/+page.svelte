@@ -41,13 +41,16 @@
 	let page = $state(1);
 	let currentFilter: FilterOptions = $state('all');
 	let currentComment = $state('');
+	let nameFilter: string = $state('');
 
 	let previousState: ComparisonStatus | null = $state(null);
 	let previousBase: string | null = $state(null);
 
 	// Derived state
 	let filteredItems = $derived(
-		allItems.filter((item) => currentFilter === 'all' || item.state === currentFilter)
+		allItems
+			.filter((item) => currentFilter === 'all' || item.state === currentFilter)
+			.filter((item) => !nameFilter || item.base.includes(nameFilter))
 	);
 	let totalPages = $derived(filteredItems.length);
 	let current = $derived(filteredItems[page - 1] ?? null);
@@ -305,7 +308,7 @@
 			<div class="main-content-grid">
 				<div class="controls-section">
 					<div class="controls-left">
-						<FileNameDisplay fileName={current.base} />
+						<FileNameDisplay fileName={current.base} bind:filter={nameFilter} />
 						<textarea
 							class="comment-textarea"
 							bind:value={currentComment}

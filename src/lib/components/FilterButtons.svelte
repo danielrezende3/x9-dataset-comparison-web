@@ -19,7 +19,7 @@
 </script>
 
 <div class="filter-container">
-	<span class="filter-label">Filtrar por:</span>
+	<span class="filter-label">Filtrar por estado:</span>
 	<div class="button-group">
 		{#each filters as filter}
 			<button
