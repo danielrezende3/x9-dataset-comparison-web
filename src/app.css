@@ -1,0 +1,41 @@
+:root {
+	/* typography */
+	--font-family-system: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+	--text-color: #333;
+
+	/* spacing */
+	--spacing-sm: 0.5rem;
+	--spacing-md: 1rem;
+	--spacing-lg: 2rem;
+
+	/* buttons */
+	--button-padding: var(--spacing-sm) var(--spacing-md);
+	--button-border: 1px solid #ccc;
+	--button-radius: 4px;
+	--button-bg: #f0f0f0;
+	--button-bg-hover: #e0e0e0;
+	--button-text-color: #333;
+	--button-cursor: pointer;
+	--button-disabled-opacity: 0.6;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	padding: var(--spacing-md);
+	font-family: var(--font-family-system);
+	color: var(--text-color);
+	background: white;
+}
+
+button,
+input,
+textarea,
+select {
+	font: inherit;
+}
