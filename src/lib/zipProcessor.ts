@@ -1,44 +1,70 @@
-// filepath: /home/danielrezende/projects/pibic/comparison-app-2/src/lib/zipProcessor.ts
 import JSZip from 'jszip';
 import { resetDB, transactionComplete, openDB, STORE_NAMES } from '$lib/db';
 
+/////////////////////////
+// — CONFIG & TYPES — //
+/////////////////////////
+
+const CODE_EXTENSIONS = ['py', 'c'] as const;
+const MD_EXT = 'md' as const;
+
+type FilenameParts = { base: string; ext: string };
+type BaseMap = Map<string, Set<string>>;
+
+/** Lightweight logger — swap out for a no-op or 3rd-party later */
+const Logger = {
+	warn: console.warn.bind(console, '[zipProcessor]'),
+	info: console.log.bind(console, '[zipProcessor]')
+};
+
+//////////////////////////
+// — HELPERS & UTILS — //
+//////////////////////////
+
 /**
- * validateFile: verifica tamanho e tipo do arquivo.
+ * Extracts base name and extension from "foo.py", "bar.md", etc.
+ * Returns null for unsupported extensions.
  */
-function validateFile(file: File): void {
-	if (file.size > 50 * 1024 * 1024) throw new Error('O arquivo ZIP excede 50 MB.');
-	if (!file.name.endsWith('.zip')) throw new Error('Por favor selecione um arquivo ZIP.');
+function parseFilename(filename: string): FilenameParts | null {
+	const dot = filename.lastIndexOf('.');
+	if (dot < 0) return null;
+	const base = filename.slice(0, dot);
+	const ext = filename.slice(dot + 1);
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	if ([...CODE_EXTENSIONS, MD_EXT].includes(ext as any)) {
+		return { base, ext };
+	}
+	return null;
 }
 
-/**
- * getFileEntries: retorna lista de arquivos não-diretório no ZIP.
- */
-function getFileEntries(zip: JSZip): string[] {
-	return Object.values(zip.files)
-		.filter((f) => !f.dir)
-		.map((f) => f.name);
+/** Throws if file not a .zip or too large. */
+function validateZipFile(file: File): void {
+	if (!file.name.toLowerCase().endsWith('.zip')) {
+		throw new Error('Selecione um arquivo ZIP (.zip).');
+	}
+	if (file.size > 50 * 1024 * 1024) {
+		throw new Error('O ZIP excede 50 MB.');
+	}
 }
 
-/**
- * mapBaseToExt: mapeia baseName para conjunto de extensões encontradas.
- */
-function mapBaseToExt(names: string[]): Map<string, Set<string>> {
-	const map = new Map<string, Set<string>>();
-	for (const name of names) {
-		const filename = name.split('/').pop()!;
-		let base, ext;
+/** Ensure no file slips through with a disallowed extension. */
+function validateEntries(entries: string[]): void {
+	const invalid = entries
+		.map((p) => p.split('/').pop()!)
+		.filter((name) => !name.match(/\.(py|c|md)$/i));
+	if (invalid.length) {
+		throw new Error(`Somente .py, .c e .md são permitidos. Encontrados: ${invalid.join(', ')}`);
+	}
+}
 
-		// Prioritize longer matches first
-		if (filename.endsWith('.py')) {
-			base = filename.slice(0, -3);
-			ext = 'py';
-		} else if (filename.endsWith('.md')) {
-			base = filename.slice(0, -3);
-			ext = 'md';
-		} else {
-			continue; // Skip files with other extensions if any slip through
-		}
-
+/** Builds a map: baseName → Set of extensions seen. */
+function buildBaseMap(entries: string[]): BaseMap {
+	const map: BaseMap = new Map();
+	for (const path of entries) {
+		const name = path.split('/').pop()!;
+		const parts = parseFilename(name);
+		if (!parts) continue;
+		const { base, ext } = parts;
 		if (!map.has(base)) map.set(base, new Set());
 		map.get(base)!.add(ext);
 	}
@@ -46,96 +72,104 @@ function mapBaseToExt(names: string[]): Map<string, Set<string>> {
 }
 
 /**
- * getMissingBases: identifica baseNames sem todos os arquivos obrigatórios.
+ * Returns array of bases that lack either:
+ *   • a Markdown file, OR
+ *   • at least one code file (py or c)
  */
-function getMissingBases(map: Map<string, Set<string>>): string[] {
-	const requiredExts = ['py', 'md'];
-	return (
-		Array.from(map.entries())
-			// eslint-disable-next-line @typescript-eslint/no-unused-vars
-			.filter(([_, exts]) => !requiredExts.every((reqExt) => exts.has(reqExt)))
-			.map(([base]) => base)
-	);
+function findIncompleteBases(map: BaseMap): string[] {
+	const missing: string[] = [];
+	for (const [base, exts] of map.entries()) {
+		if (!exts.has(MD_EXT) || !CODE_EXTENSIONS.some((e) => exts.has(e))) {
+			missing.push(base);
+		}
+	}
+	return missing;
 }
 
+///////////////////////
+// — DB OPERATIONS — //
+///////////////////////
+
 /**
- * storeZipContents: armazena conteúdos do ZIP no IndexedDB.
+ * Reads code + markdown text from ZIP and writes them (plus initial state)
+ * into IndexedDB.
+ * Stores `{ base, code, language }` in CODE, `{ base, md }` in MARKDOWN,
+ * and `{ base, state }` in STATE.
  */
-async function storeZipContents(map: Map<string, Set<string>>, zip: JSZip): Promise<void> {
+async function storeContents(map: BaseMap, zip: JSZip): Promise<void> {
 	const db = await openDB();
 
-	for (const base of map.keys()) {
-		// Ensure files exist before trying to read them
-		const pyFile = zip.file(`${base}.py`);
-		const mdFile = zip.file(`${base}.md`);
-
-		if (!pyFile || !mdFile) {
-			console.warn(
-				`Skipping base "${base}" due to missing one or more required files in zip object.`
-			);
-			continue; // Should ideally not happen if getMissingBases works correctly
+	for (const [base, exts] of map.entries()) {
+		// pick py over c if both exist
+		const codeExt = CODE_EXTENSIONS.find((e) => exts.has(e))!;
+		if (!exts.has(MD_EXT)) {
+			Logger.warn(`Pulando "${base}" sem .md`);
+			continue;
 		}
 
-		const [codeTxt, mdTxt] = await Promise.all([pyFile.async('text'), mdFile.async('text')]);
+		const codeFile = zip.file(`${base}.${codeExt}`);
+		const mdFile = zip.file(`${base}.${MD_EXT}`);
+		if (!codeFile || !mdFile) {
+			Logger.warn(`Pulando "${base}" — arquivo não encontrado no ZIP`);
+			continue;
+		}
 
-		// Trim first and last lines from markdown if they exist
-		const mdLines = mdTxt.split('\n');
-		const trimmedMd = mdLines.length > 2 ? mdLines.slice(1, -1).join('\n') : mdTxt;
+		const [codeText, mdText] = await Promise.all([codeFile.async('text'), mdFile.async('text')]);
 
-		const tx = db.transaction(Object.values(STORE_NAMES), 'readwrite');
-		const codeStore = tx.objectStore(STORE_NAMES.CODE);
-		const mdStore = tx.objectStore(STORE_NAMES.MARKDOWN);
-		const stateStore = tx.objectStore(STORE_NAMES.STATE);
+		// remove primeira e última linha de MD (e.g. ‹---› fences)
+		const lines = mdText.split('\n');
+		const trimmedMd = lines.length > 2 ? lines.slice(1, -1).join('\n') : mdText;
 
-		// Use await for each put operation for clarity or Promise.all if preferred
-		await codeStore.put({ base, code: codeTxt });
-		await mdStore.put({ base, md: trimmedMd });
-		await stateStore.put({ base, state: 'not-compared' });
+		const tx = db.transaction(
+			[STORE_NAMES.CODE, STORE_NAMES.MARKDOWN, STORE_NAMES.STATE],
+			'readwrite'
+		);
+		tx.objectStore(STORE_NAMES.CODE).put({ base, code: codeText, language: codeExt });
+		tx.objectStore(STORE_NAMES.MARKDOWN).put({ base, md: trimmedMd });
+		tx.objectStore(STORE_NAMES.STATE).put({ base, state: 'not-compared' });
 
 		await transactionComplete(tx);
-		console.log(`Stored data for base: ${base}`);
+		Logger.info(`Persistido: ${base} (.${codeExt} + .md)`);
 	}
 }
 
-/**
- * processZip: Orchestrates the entire ZIP processing flow.
- * @param file The ZIP file to process.
- * @param updateStatus Callback to update the loading message in the UI.
- */
-export async function processZip(
-	file: File,
-	updateStatus: (message: string) => void
-): Promise<void> {
-	updateStatus('Validando arquivo...');
-	validateFile(file); // Basic validation first
+//////////////////////
+// — MAIN EXPORT —  //
+//////////////////////
 
-	updateStatus('Limpando dados antigos...');
+/**
+ * processZip:
+ *   1. valida arquivo
+ *   2. reseta DB
+ *   3. valida estrutura do ZIP
+ *   4. grava conteúdo no IndexedDB
+ */
+export async function processZip(file: File, updateStatus: (msg: string) => void): Promise<void> {
+	updateStatus('Validando ZIP…');
+	validateZipFile(file);
+
+	updateStatus('Limpando banco…');
 	await resetDB();
 
-	updateStatus('Lendo arquivo ZIP...');
+	updateStatus('Lendo ZIP…');
 	const zip = await JSZip.loadAsync(file);
-	const entries = getFileEntries(zip);
 
-	updateStatus('Verificando estrutura do ZIP...');
-	// Check for disallowed extensions first
-	const invalidFiles = entries.filter((name) => {
-		const filename = name.split('/').pop()!;
-		return !filename.match(/\.(py|md)$/);
-	});
-	if (invalidFiles.length) {
+	updateStatus('Validando conteúdo…');
+	const entries = Object.values(zip.files)
+		.filter((f) => !f.dir)
+		.map((f) => f.name);
+
+	validateEntries(entries);
+	const baseMap = buildBaseMap(entries);
+
+	const incomplete = findIncompleteBases(baseMap);
+	if (incomplete.length) {
 		throw new Error(
-			`Apenas .py e .md são aceitos. Arquivos com extensões não permitidas encontrados: ${invalidFiles.join(', ')}. `
+			`Faltam arquivos para: ${incomplete.join(', ')}. ` +
+				`Cada conjunto precisa de .md + (.py ou .c).`
 		);
 	}
 
-	const map = mapBaseToExt(entries);
-	const missing = getMissingBases(map);
-	if (missing.length) {
-		throw new Error(
-			`O ZIP está incompleto. Cada item deve ter arquivos .py e .md. Faltam arquivos para: ${missing.join(', ')}`
-		);
-	}
-
-	updateStatus('Armazenando dados...');
-	await storeZipContents(map, zip);
+	updateStatus('Gravando no banco…');
+	await storeContents(baseMap, zip);
 }
