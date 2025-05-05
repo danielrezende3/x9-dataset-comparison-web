@@ -29,13 +29,7 @@ function mapBaseToExt(names: string[]): Map<string, Set<string>> {
 		let base, ext;
 
 		// Prioritize longer matches first
-		if (filename.endsWith('.py.json')) {
-			base = filename.slice(0, -8);
-			ext = 'py.json';
-		} else if (filename.endsWith('.py.py')) {
-			base = filename.slice(0, -6);
-			ext = 'py.py';
-		} else if (filename.endsWith('.py')) {
+		if (filename.endsWith('.py')) {
 			base = filename.slice(0, -3);
 			ext = 'py';
 		} else if (filename.endsWith('.md')) {
@@ -55,7 +49,7 @@ function mapBaseToExt(names: string[]): Map<string, Set<string>> {
  * getMissingBases: identifica baseNames sem todos os arquivos obrigatórios.
  */
 function getMissingBases(map: Map<string, Set<string>>): string[] {
-	const requiredExts = ['py', 'py.json', 'md'];
+	const requiredExts = ['py', 'md'];
 	return (
 		Array.from(map.entries())
 			// eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -73,21 +67,16 @@ async function storeZipContents(map: Map<string, Set<string>>, zip: JSZip): Prom
 	for (const base of map.keys()) {
 		// Ensure files exist before trying to read them
 		const pyFile = zip.file(`${base}.py`);
-		const jsonFile = zip.file(`${base}.py.json`);
 		const mdFile = zip.file(`${base}.md`);
 
-		if (!pyFile || !jsonFile || !mdFile) {
+		if (!pyFile || !mdFile) {
 			console.warn(
 				`Skipping base "${base}" due to missing one or more required files in zip object.`
 			);
 			continue; // Should ideally not happen if getMissingBases works correctly
 		}
 
-		const [codeTxt, metaTxt, mdTxt] = await Promise.all([
-			pyFile.async('text'),
-			jsonFile.async('text'),
-			mdFile.async('text')
-		]);
+		const [codeTxt, mdTxt] = await Promise.all([pyFile.async('text'), mdFile.async('text')]);
 
 		// Trim first and last lines from markdown if they exist
 		const mdLines = mdTxt.split('\n');
@@ -95,13 +84,11 @@ async function storeZipContents(map: Map<string, Set<string>>, zip: JSZip): Prom
 
 		const tx = db.transaction(Object.values(STORE_NAMES), 'readwrite');
 		const codeStore = tx.objectStore(STORE_NAMES.CODE);
-		const metaStore = tx.objectStore(STORE_NAMES.META);
 		const mdStore = tx.objectStore(STORE_NAMES.MARKDOWN);
 		const stateStore = tx.objectStore(STORE_NAMES.STATE);
 
 		// Use await for each put operation for clarity or Promise.all if preferred
 		await codeStore.put({ base, code: codeTxt });
-		await metaStore.put({ base, meta: JSON.parse(metaTxt) });
 		await mdStore.put({ base, md: trimmedMd });
 		await stateStore.put({ base, state: 'not-compared' });
 
@@ -133,11 +120,11 @@ export async function processZip(
 	// Check for disallowed extensions first
 	const invalidFiles = entries.filter((name) => {
 		const filename = name.split('/').pop()!;
-		return !filename.match(/\.(py\.json|py\.py|py|md)$/);
+		return !filename.match(/\.(py|md)$/);
 	});
 	if (invalidFiles.length) {
 		throw new Error(
-			`Arquivos com extensões não permitidas encontrados: ${invalidFiles.join(', ')}. Apenas .py, .py.py, .md e .py.json são aceitos.`
+			`Arquivos com extensões não permitidas encontrados: ${invalidFiles.join(', ')}. Apenas .py e .md são aceitos.`
 		);
 	}
 
@@ -145,7 +132,7 @@ export async function processZip(
 	const missing = getMissingBases(map);
 	if (missing.length) {
 		throw new Error(
-			`O ZIP está incompleto. Cada item deve ter arquivos .py, .py.json e .md. Faltam arquivos para: ${missing.join(', ')}`
+			`O ZIP está incompleto. Cada item deve ter arquivos .py e .md. Faltam arquivos para: ${missing.join(', ')}`
 		);
 	}
 

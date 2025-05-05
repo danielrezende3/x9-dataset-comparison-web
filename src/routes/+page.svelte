@@ -119,10 +119,10 @@
 </script>
 
 <p>
-	Faça upload de um arquivo ZIP contendo os arquivos .py, .py.json e .md para cada item a ser
+	Faça upload de um arquivo ZIP contendo <b>apenas</b> os arquivos .py e .md para cada item a ser
 	comparado.
 </p>
-<p>Se você já fez o upload pro banco, <a href="/files">clique aqui</a></p>
+<p>Se você já fez o upload pro banco, <a href="/files">clique aqui</a>.</p>
 <div
 	bind:this={uploadArea}
 	class="upload-area"

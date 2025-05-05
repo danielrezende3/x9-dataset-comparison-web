@@ -1,6 +1,5 @@
 // filepath: src/lib/db.ts
 import type { PythonCode } from '$lib/types/pythonCode';
-import type { PythonMeta } from '$lib/types/pythonMeta';
 import type { Markdown } from '$lib/types/markdown';
 import type { stateComparison } from '$lib/types/stateComparison';
 import type { FilterOptions } from '$lib/types/filterOptions';
@@ -15,8 +14,6 @@ interface Comment {
 export interface CombinedItem {
 	base: string;
 	code: string;
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	meta: any;
 	md: string;
 	state: ComparisonStatus;
 	comment: string;
@@ -27,7 +24,6 @@ const DB_VERSION = 1;
 
 export const STORE_NAMES = {
 	CODE: 'pythonCode',
-	META: 'pythonMeta',
 	MARKDOWN: 'markdown',
 	STATE: 'stateComparison',
 	COMMENTS: 'comments'
@@ -152,11 +148,6 @@ export const getCode = (base: string) => getItem<PythonCode>(STORE_NAMES.CODE, b
 export const getAllCodes = () => getAllItems<PythonCode>(STORE_NAMES.CODE);
 export const putCode = (item: PythonCode) => putItem<PythonCode>(STORE_NAMES.CODE, item);
 
-// Python Meta
-export const getMeta = (base: string) => getItem<PythonMeta>(STORE_NAMES.META, base);
-export const getAllMetas = () => getAllItems<PythonMeta>(STORE_NAMES.META);
-export const putMeta = (item: PythonMeta) => putItem<PythonMeta>(STORE_NAMES.META, item);
-
 // Markdown
 export const getMarkdown = (base: string) => getItem<Markdown>(STORE_NAMES.MARKDOWN, base);
 export const getAllMarkdowns = () => getAllItems<Markdown>(STORE_NAMES.MARKDOWN);
@@ -184,9 +175,8 @@ export async function getAllCombinedItems(): Promise<CombinedItem[]> {
 	const db = await openDB();
 	const tx = db.transaction(Object.values(STORE_NAMES), 'readonly');
 
-	const [codes, metas, mds, states, commentsData] = await Promise.all([
+	const [codes, mds, states, commentsData] = await Promise.all([
 		requestToPromise(tx.objectStore(STORE_NAMES.CODE).getAll()),
-		requestToPromise(tx.objectStore(STORE_NAMES.META).getAll()),
 		requestToPromise(tx.objectStore(STORE_NAMES.MARKDOWN).getAll()),
 		requestToPromise(tx.objectStore(STORE_NAMES.STATE).getAll()),
 		requestToPromise(tx.objectStore(STORE_NAMES.COMMENTS).getAll())
@@ -206,9 +196,6 @@ export async function getAllCombinedItems(): Promise<CombinedItem[]> {
 	}
 
 	// Merge other data
-	for (const m of metas) {
-		if (map.has(m.base)) map.get(m.base)!.meta = m.meta;
-	}
 	for (const m of mds) {
 		if (map.has(m.base)) map.get(m.base)!.md = m.md;
 	}
@@ -224,7 +211,6 @@ export async function getAllCombinedItems(): Promise<CombinedItem[]> {
 		(item): item is CombinedItem =>
 			!!item.base &&
 			item.code !== undefined &&
-			item.meta !== undefined &&
 			item.md !== undefined &&
 			item.state !== undefined &&
 			item.comment !== undefined
