@@ -339,6 +339,9 @@
 {/if}
 
 <style>
+	:global(html) {
+		scrollbar-gutter: stable;
+	}
 	:root {
 		--button-padding: 0.5rem 1rem;
 		--button-border: 1px solid #ccc;
