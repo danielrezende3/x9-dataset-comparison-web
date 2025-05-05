@@ -42,6 +42,7 @@
 	let currentFilter: FilterOptions = $state('all');
 	let currentComment = $state('');
 	let nameFilter: string = $state('');
+	let selectedTag = $state('');
 
 	let previousState: ComparisonStatus | null = $state(null);
 	let previousBase: string | null = $state(null);
@@ -51,10 +52,26 @@
 		allItems
 			.filter((item) => currentFilter === 'all' || item.state === currentFilter)
 			.filter((item) => !nameFilter || item.base.includes(nameFilter))
+			.filter((item) => {
+				if (!selectedTag) return true;
+				const re = new RegExp(`#${selectedTag}`, 'g');
+				return item.comment.match(re);
+			})
 	);
 	let totalPages = $derived(filteredItems.length);
 	let current = $derived(filteredItems[page - 1] ?? null);
-
+	let allTags = $derived.by(() => {
+		const set = new Set<string>();
+		const re = /#([\w-]+)/g;
+		for (const item of allItems) {
+			const text = item.comment;
+			let match: RegExpExecArray | null;
+			while ((match = re.exec(text))) {
+				set.add(match[1]);
+			}
+		}
+		return Array.from(set);
+	});
 	// Effects
 	$effect(() => {
 		page = 1;
@@ -82,6 +99,9 @@
 	});
 
 	// Handlers
+	function filterByTag(tag: string) {
+		selectedTag = tag;
+	}
 	function handleStatusChange(event: CustomEvent<ComparisonStatus>) {
 		const newStatus = event.detail;
 		if (!current || current.state === newStatus) return;
@@ -282,6 +302,17 @@
 {:else if allItems.length > 0}
 	<div class="top-controls-wrapper">
 		<FilterButtons bind:selectedFilter={currentFilter} />
+
+		<div>
+			<strong>Filtrar por tag: </strong>
+			<select bind:value={selectedTag} onchange={() => filterByTag(selectedTag)}>
+				<option value="">— Todos —</option>
+				{#each allTags as tag}
+					<option value={tag}>#{tag}</option>
+				{/each}
+			</select>
+		</div>
+
 		<div class="action-buttons">
 			<button onclick={sendAnotherZip}>Enviar outro zip</button>
 			<button onclick={exportCsv}>Exportar csv</button>
@@ -309,6 +340,7 @@
 				<div class="controls-section">
 					<div class="controls-left">
 						<FileNameDisplay fileName={current.base} bind:filter={nameFilter} />
+
 						<textarea
 							class="comment-textarea"
 							bind:value={currentComment}
@@ -441,6 +473,28 @@
 		flex-wrap: wrap;
 		gap: 1rem;
 	}
+	.top-controls-wrapper > div:nth-of-type(1) {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.top-controls-wrapper select {
+		padding: var(--button-padding);
+		border: var(--button-border);
+		background-color: var(--button-bg);
+		border-radius: var(--button-radius);
+		color: var(--button-text-color);
+		font-size: var(--button-font-size);
+		cursor: var(--button-cursor);
+		transition: background-color 0.2s;
+		min-width: 150px;
+	}
+
+	.top-controls-wrapper select:hover {
+		background-color: var(--button-bg-hover);
+	}
+
 	.action-buttons {
 		display: flex;
 		gap: 1rem;
