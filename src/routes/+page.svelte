@@ -118,51 +118,71 @@
 	}
 </script>
 
-<p>
-	Faça upload de um arquivo ZIP contendo <b>apenas</b> os arquivos .py e .md para cada item a ser
-	comparado.
-</p>
-<p>Se você já fez o upload pro banco, <a href="/files">clique aqui</a>.</p>
-<div
-	bind:this={uploadArea}
-	class="upload-area"
-	role="button"
-	tabindex={loading ? -1 : 0}
-	aria-describedby="upload-instructions"
-	aria-disabled={loading}
-	onclick={loading ? undefined : openFilePicker}
-	ondragover={onDragOver}
-	ondragleave={onDragLeave}
-	ondrop={onDrop}
-	onkeydown={onKeyDown}
->
-	{#if loading}
-		<p>{loadingMessage}</p>
-	{:else if selectedFileName}
-		<p>Arquivo selecionado: <strong>{selectedFileName}</strong></p>
-		<p>Arraste outro arquivo ou clique para substituir.</p>
-	{:else}
-		<p id="upload-instructions">
-			Arraste e solte o arquivo ZIP aqui,<br />ou clique para selecionar.
-		</p>
-	{/if}
-	<input
-		bind:this={fileInput}
-		class="hidden"
-		type="file"
-		accept=".zip"
-		onchange={onFileSelected}
-		disabled={loading}
-	/>
-</div>
+<main class="page-container">
+	<p>
+		Faça upload de um arquivo ZIP contendo <b>apenas</b> os arquivos .py e .md para cada item a ser comparado.
+	</p>
+	<p>Se você já fez o upload pro banco, <a href="/files">clique aqui</a>.</p>
+	<div
+		bind:this={uploadArea}
+		class="upload-area"
+		role="button"
+		tabindex={loading ? -1 : 0}
+		aria-describedby="upload-instructions"
+		aria-disabled={loading}
+		onclick={loading ? undefined : openFilePicker}
+		ondragover={onDragOver}
+		ondragleave={onDragLeave}
+		ondrop={onDrop}
+		onkeydown={onKeyDown}
+	>
+		{#if loading}
+			<p>{loadingMessage}</p>
+		{:else if selectedFileName}
+			<p>Arquivo selecionado: <strong>{selectedFileName}</strong></p>
+			<p>Arraste outro arquivo ou clique para substituir.</p>
+		{:else}
+			<p id="upload-instructions">
+				Arraste e solte o arquivo ZIP aqui,<br />ou clique para selecionar.
+			</p>
+		{/if}
+		<input
+			bind:this={fileInput}
+			class="hidden"
+			type="file"
+			accept=".zip"
+			onchange={onFileSelected}
+			disabled={loading}
+		/>
+	</div>
 
-{#if error}
-	<p class="message error" role="alert">{error}</p>
-{:else if success && !loading}
-	<p class="message success" role="status">{loadingMessage}</p>
-{/if}
+	{#if error}
+		<p class="message error" role="alert">{error}</p>
+	{:else if success && !loading}
+		<p class="message success" role="status">{loadingMessage}</p>
+	{/if}
+</main>
+
 
 <style>
+	.page-container {
+		padding-left: 2rem;
+		padding-right: 2rem; 
+		max-width: 900px; 
+		margin-left: auto; 
+		margin-right: auto; 
+	}
+
+	.upload-area {
+		border: 2px dashed #aaa;
+		border-radius: 8px;
+		padding: 2rem;
+		text-align: center;
+		cursor: pointer;
+		transition:
+			border-color 0.2s,
+			background-color 0.2s;
+	}
 	.upload-area {
 		border: 2px dashed #aaa;
 		border-radius: 8px;
