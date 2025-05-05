@@ -44,7 +44,6 @@
 	let nameFilter: string = $state('');
 	let selectedTag = $state('');
 
-	let previousState: ComparisonStatus | null = $state(null);
 	let previousBase: string | null = $state(null);
 
 	// Derived state
@@ -81,30 +80,27 @@
 	$effect(() => {
 		if (!current) {
 			previousBase = null;
-			previousState = null;
 			currentComment = '';
 			return;
 		}
 
 		if (current.base !== previousBase) {
 			previousBase = current.base;
-			previousState = current.state;
 			currentComment = current.comment || '';
 			console.log('Loaded new item:', current.base);
-		} else if (current.state !== previousState) {
-			console.log('State changed for', current.base, 'to', current.state);
-			updateItemState(current.base, current.state);
-			previousState = current.state;
 		}
 	});
 
 	// Handlers
 	function filterByTag(tag: string) {
+		page = 1;
 		selectedTag = tag;
+		console.log('filterByTag changed, resetting page to 1:', tag);
 	}
 	function handleStatusChange(event: CustomEvent<ComparisonStatus>) {
 		const newStatus = event.detail;
-		if (!current || current.state === newStatus) return;
+		const baseToUpdate = current?.base;
+		if (!baseToUpdate || current?.state === newStatus) return;
 
 		const idx = allItems.findIndex((item) => item.base === current.base);
 		if (idx === -1) {
@@ -113,12 +109,13 @@
 		}
 
 		allItems[idx].state = newStatus;
+		updateItemState(baseToUpdate, newStatus);
 	}
 
 	async function updateItemState(base: string, newState: ComparisonStatus) {
 		try {
 			await dbUpdateState(base, newState);
-			console.log(`State updated for ${base}`);
+			console.log(`State updated in DB for ${base} to ${newState}`);
 		} catch (e: any) {
 			console.error('DB update failed:', e);
 			error = `Failed to save status: ${e.message}`;
@@ -138,6 +135,7 @@
 	}
 
 	const debouncedSaveComment = debounce(saveComment, 500);
+
 	function debounce<T extends (...args: any[]) => any>(func: T, wait: number) {
 		let timeout: number;
 		return (...args: Parameters<T>) => {
