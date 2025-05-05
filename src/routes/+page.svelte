@@ -119,6 +119,7 @@
 </script>
 
 <main class="page-container">
+	<h1>Comparador entre código-fonte e mermaid.</h1>
 	<p>
 		Faça upload de um arquivo ZIP contendo <b>apenas</b> os arquivos .py e .md para cada item a ser comparado.
 	</p>
