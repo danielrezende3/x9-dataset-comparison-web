@@ -300,8 +300,8 @@
 		<Pager
 			{page}
 			{totalPages}
-			onPrev={page > 1 ? () => page-- : null}
-			onNext={page < totalPages ? () => page++ : null}
+			onPrev={totalPages > 0 ? () => (page = page > 1 ? page - 1 : totalPages) : null}
+			onNext={totalPages > 0 ? () => (page = page < totalPages ? page + 1 : 1) : null}
 		/>
 
 		{#if current}
