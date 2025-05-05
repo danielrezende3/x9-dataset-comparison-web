@@ -1,7 +1,6 @@
-<!-- filepath: /home/danielrezende/projects/pibic/comparison-app-2/src/lib/components/ComparisonStatusButtons.svelte -->
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import type { FilterOptions } from '$lib/types/filterOptions'; // Adjust path as needed
+	import type { FilterOptions } from '$lib/types/filterOptions';
 
 	type ComparisonStatus = Exclude<FilterOptions, 'all'>;
 
@@ -24,7 +23,6 @@
 	{#each statuses as status}
 		<button class:selected={selectedStatus === status} on:click={() => selectStatus(status)}>
 			{status}
-			<!-- Display status text -->
 		</button>
 	{/each}
 </div>
@@ -32,7 +30,7 @@
 <style>
 	.status-buttons {
 		display: flex;
-		flex-direction: column; /* Or row, depending on your layout */
+		flex-direction: column;
 		gap: 0.5rem;
 	}
 	button {
@@ -43,7 +41,7 @@
 		text-align: center;
 	}
 	button.selected {
-		background-color: #d0d0ff; /* Highlight selected */
+		background-color: #d0d0ff;
 		border-color: #a0a0ff;
 		font-weight: bold;
 	}

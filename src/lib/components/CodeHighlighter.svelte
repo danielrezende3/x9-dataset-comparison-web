@@ -3,13 +3,10 @@
 	import python from 'svelte-highlight/languages/python';
 	import tomorrow from 'svelte-highlight/styles/atom-one-dark';
 
-	// Destructure props to receive `code` from parent components
 	let { code }: { code: string } = $props();
 
-	// Track font size with reactive state
-	let fontSize = $state(14); // Default font size in pixels
+	let fontSize = $state(14);
 
-	// Functions to increase and decrease font size
 	function increaseFontSize() {
 		if (fontSize < 24) fontSize += 2;
 	}
@@ -24,7 +21,6 @@
 </svelte:head>
 
 <div class="code-wrapper">
-	<!-- Render the provided `code` string with syntax highlighting -->
 	<div class="highlight-container" style="font-size: {fontSize}px;">
 		<Highlight {code} language={python} let:highlighted>
 			<LineNumbers {highlighted} hideBorder />

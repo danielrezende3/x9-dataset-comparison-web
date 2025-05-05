@@ -1,134 +1,129 @@
-<!-- filepath: src/routes/files/+page.svelte -->
 <script lang="ts">
+	// Svelte lifecycle & navigation
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+
+	// Components
 	import Pager from '$lib/components/Pager.svelte';
 	import CodeHighlighter from '$lib/components/CodeHighlighter.svelte';
 	import PanZoomMermaid from '$lib/components/PanZoomMermaid.svelte';
-	import type { FilterOptions } from '$lib/types/filterOptions';
 	import FilterButtons from '$lib/components/FilterButtons.svelte';
 	import FileNameDisplay from '$lib/components/FileNameDisplay.svelte';
 	import ComparisonStatusButtons from '$lib/components/ComparisonStatusButtons.svelte';
-	import { goto } from '$app/navigation';
-	// Import DB functions and types
+
+	// Types
+	import type { FilterOptions } from '$lib/types/filterOptions';
+	import type { CombinedItem } from '$lib/db';
+
+	// IndexedDB helpers
 	import {
 		updateState as dbUpdateState,
 		updateComment as dbUpdateComment,
 		getAllCombinedItems,
 		getAllStates,
 		getAllComments,
-		type CombinedItem,
-		openDB, // Still needed for direct transaction in import/export
-		requestToPromise, // Still needed for direct transaction in import/export
-		transactionComplete, // Still needed for direct transaction in import/export
-		STORE_NAMES // Still needed for direct transaction in import/export
+		openDB,
+		requestToPromise,
+		transactionComplete,
+		STORE_NAMES
 	} from '$lib/db';
 
+	// Aliases
 	type ComparisonStatus = Exclude<FilterOptions, 'all'>;
+
+	// Local state
 	let csvImportInput: HTMLInputElement | null = $state(null);
-	let allItems: CombinedItem[] = $state([]); // Use CombinedItem type
+	let allItems: CombinedItem[] = $state([]);
 
 	let loading = $state(true);
 	let error = $state('');
+
 	let page = $state(1);
 	let currentFilter: FilterOptions = $state('all');
+	let currentComment = $state('');
+
+	let previousState: ComparisonStatus | null = $state(null);
+	let previousBase: string | null = $state(null);
+
+	// Derived state
 	let filteredItems = $derived(
-		allItems.filter((item) => {
-			if (currentFilter === 'all') {
-				return true;
-			}
-			return item.state === currentFilter;
-		})
+		allItems.filter((item) => currentFilter === 'all' || item.state === currentFilter)
 	);
 	let totalPages = $derived(filteredItems.length);
 	let current = $derived(filteredItems[page - 1] ?? null);
-	let previousState: ComparisonStatus | null = $state(null);
-	let previousBase: string | null = $state(null);
-	let currentComment = $state('');
 
+	// Effects
 	$effect(() => {
 		page = 1;
-		console.log('Filter changed, page reset to 1. New filter:', currentFilter);
+		console.log('Filter changed, resetting page to 1:', currentFilter);
 	});
 
-	function handleStatusChange(event: CustomEvent<ComparisonStatus>) {
-		const newStatus = event.detail;
-		if (current && current.state !== newStatus) {
-			console.log(`Status change requested for ${current.base} to ${newStatus}`);
-			const itemIndex = allItems.findIndex((item) => item.base === current.base);
-			if (itemIndex !== -1) {
-				// Update local state directly (runes handle reactivity)
-				allItems[itemIndex].state = newStatus;
-				// The $effect below will detect the change in `current.state` and trigger DB update
-			} else {
-				console.error('Current item not found in allItems during status change');
-			}
-		}
-	}
-
 	$effect(() => {
-		if (current) {
-			if (current.base !== previousBase) {
-				console.log('Item changed. Base:', current.base);
-				previousBase = current.base;
-				previousState = current.state;
-				currentComment = current.comment || ''; // Load comment for new item
-			} else {
-				// Item is the same, check if state changed
-				if (current.state !== previousState) {
-					console.log('State changed (detected by effect), attempting DB update...');
-					updateItemState(current.base, current.state); // Call DB update function
-					previousState = current.state; // Update previous state after successful save attempt
-				}
-			}
-		} else {
+		if (!current) {
 			previousBase = null;
 			previousState = null;
 			currentComment = '';
+			return;
+		}
+
+		if (current.base !== previousBase) {
+			previousBase = current.base;
+			previousState = current.state;
+			currentComment = current.comment || '';
+			console.log('Loaded new item:', current.base);
+		} else if (current.state !== previousState) {
+			console.log('State changed for', current.base, 'to', current.state);
+			updateItemState(current.base, current.state);
+			previousState = current.state;
 		}
 	});
 
-	// Use the imported DB function
+	// Handlers
+	function handleStatusChange(event: CustomEvent<ComparisonStatus>) {
+		const newStatus = event.detail;
+		if (!current || current.state === newStatus) return;
+
+		const idx = allItems.findIndex((item) => item.base === current.base);
+		if (idx === -1) {
+			console.error('Item not found during status change');
+			return;
+		}
+
+		allItems[idx].state = newStatus;
+	}
+
 	async function updateItemState(base: string, newState: ComparisonStatus) {
-		console.log(`Updating state for ${base} to ${newState}`);
 		try {
-			await dbUpdateState(base, newState); // Use imported function
-			console.log(`State updated successfully for ${base}`);
-			// No need to update local state here, it was updated in handleStatusChange
+			await dbUpdateState(base, newState);
+			console.log(`State updated for ${base}`);
 		} catch (e: any) {
-			console.error('Failed to update state in DB:', e);
-			error = `Failed to save status change: ${e.message}`;
-			// Optionally revert local state if DB update fails
-			// refreshAllItems(); // Or find and revert the specific item
+			console.error('DB update failed:', e);
+			error = `Failed to save status: ${e.message}`;
 		}
 	}
 
-	// Use the imported DB function
 	async function saveComment(base: string, comment: string) {
-		console.log(`Saving comment for ${base}`);
 		try {
-			await dbUpdateComment(base, comment); // Use imported function
-
-			// Update local state as well
-			const itemIndex = allItems.findIndex((item) => item.base === base);
-			if (itemIndex !== -1) {
-				allItems[itemIndex].comment = comment;
-			}
-			console.log(`Comment saved successfully for ${base}`);
+			await dbUpdateComment(base, comment);
+			const idx = allItems.findIndex((item) => item.base === base);
+			if (idx > -1) allItems[idx].comment = comment;
+			console.log(`Comment saved for ${base}`);
 		} catch (e: any) {
-			console.error('Failed to save comment:', e);
+			console.error('Comment save failed:', e);
 			error = `Failed to save comment: ${e.message}`;
-			// Optionally revert local comment state if save fails
-			// currentComment = allItems.find(item => item.base === base)?.comment || '';
 		}
 	}
 
-	// Removed local openDB, requestToPromise, transactionComplete
-
-	function sendAnotherZip() {
-		goto('/');
+	const debouncedSaveComment = debounce(saveComment, 500);
+	function debounce<T extends (...args: any[]) => any>(func: T, wait: number) {
+		let timeout: number;
+		return (...args: Parameters<T>) => {
+			clearTimeout(timeout);
+			timeout = window.setTimeout(() => func(...args), wait);
+		};
 	}
 
-	// Use imported DB functions for export
+	// CSV export/import
 	async function exportCsv() {
 		error = '';
 		try {
@@ -169,7 +164,6 @@
 		csvImportInput?.click();
 	}
 
-	// Use imported DB functions for import (still needs direct transaction for bulk)
 	async function handleCsvImport(event: Event) {
 		const input = event.target as HTMLInputElement;
 		if (!input.files || input.files.length === 0) return;
@@ -254,20 +248,23 @@
 		}
 	}
 
-	// Use the combined fetch function
+	// Refresh items
 	async function refreshAllItems() {
-		console.log('Refreshing all items from DB...');
 		try {
-			allItems = await getAllCombinedItems(); // Use the new function
-			page = 1; // Reset page after refresh
-			console.log(`Refreshed ${allItems.length} items.`);
+			allItems = await getAllCombinedItems();
+			page = 1;
 		} catch (e: any) {
-			error = `Failed to refresh data: ${e.message}`;
-			console.error('Error during refreshAllItems:', e);
-			allItems = []; // Clear items on error
+			error = `Data refresh failed: ${e.message}`;
+			allItems = [];
 		}
 	}
 
+	// Navigation
+	function sendAnotherZip() {
+		goto('/');
+	}
+
+	// Initialization
 	onMount(async () => {
 		loading = true;
 		await refreshAllItems();
@@ -312,7 +309,7 @@
 						<textarea
 							class="comment-textarea"
 							bind:value={currentComment}
-							onblur={() => saveComment(current.base, currentComment)}
+							oninput={() => current && debouncedSaveComment(current.base, currentComment)}
 							placeholder="Adicione seu comentário aqui..."
 							rows="4"
 						></textarea>

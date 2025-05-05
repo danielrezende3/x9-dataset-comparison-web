@@ -1,7 +1,6 @@
 <script lang="ts">
 	import mermaid from 'mermaid';
 	import panzoom from 'panzoom';
-	import { onMount } from 'svelte';
 
 	// Props
 	let { diagram }: { diagram: string } = $props();

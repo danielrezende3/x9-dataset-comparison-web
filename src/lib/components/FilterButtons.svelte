@@ -39,7 +39,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		margin-bottom: 1rem; /* Add some space below */
+		margin-bottom: 1rem;
 	}
 
 	.filter-label {
@@ -48,44 +48,43 @@
 
 	.button-group {
 		display: flex;
-		gap: 0.3rem; /* Small gap between buttons */
+		gap: 0.3rem;
 	}
 
 	.filter-button {
-		padding: 0.5rem 1rem; /* Standard padding */
-		border: 1px solid #ccc; /* Standard border */
-		background-color: #f0f0f0; /* Standard background */
-		border-radius: 4px; /* Standard radius */
+		padding: 0.5rem 1rem;
+		border: 1px solid #ccc;
+		background-color: #f0f0f0;
+		border-radius: 4px;
 		cursor: pointer;
-		font-size: 0.9rem; /* Standard font size */
+		font-size: 0.9rem;
 		transition:
 			background-color 0.2s,
 			border-color 0.2s;
-		color: #333; /* Standard text color */
+		color: #333;
 	}
 
 	.filter-button:hover {
-		background-color: #e0e0e0; /* Standard hover */
+		background-color: #e0e0e0;
 	}
 
 	.filter-button.active {
-		background-color: #d0d0d0; /* Keep active distinct */
-		border-color: #aaa; /* Adjust active border */
+		background-color: #d0d0d0;
+		border-color: #aaa;
 		font-weight: bold;
 	}
 
-	/* Basic responsiveness */
 	@media (max-width: 600px) {
 		.filter-container {
 			flex-direction: column;
 			align-items: flex-start;
 		}
 		.button-group {
-			flex-wrap: wrap; /* Allow buttons to wrap on small screens */
+			flex-wrap: wrap;
 			margin-top: 0.5rem;
 		}
 		.filter-button {
-			margin-bottom: 0.3rem; /* Add space when wrapped */
+			margin-bottom: 0.3rem;
 		}
 	}
 </style>
