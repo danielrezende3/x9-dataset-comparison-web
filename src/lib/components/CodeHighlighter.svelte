@@ -62,6 +62,7 @@
 	.code-wrapper {
 		position: relative;
 		width: 100%;
+		height: 100%;
 	}
 
 	.highlight-container {
@@ -76,6 +77,7 @@
 		right: 10px;
 		display: flex;
 		gap: 5px;
+		z-index: 10;
 	}
 
 	.control-button {

@@ -71,6 +71,7 @@
 
 	.diagram-container {
 		width: 100%;
+		height: 100%;
 		overflow: hidden;
 		background-color: white;
 		border-radius: 4px;

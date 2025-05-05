@@ -124,7 +124,7 @@ export async function processZip(
 	});
 	if (invalidFiles.length) {
 		throw new Error(
-			`Arquivos com extensões não permitidas encontrados: ${invalidFiles.join(', ')}. Apenas .py e .md são aceitos.`
+			`Apenas .py e .md são aceitos. Arquivos com extensões não permitidas encontrados: ${invalidFiles.join(', ')}. `
 		);
 	}
 

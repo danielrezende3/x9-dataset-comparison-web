@@ -363,7 +363,6 @@
 		grid-template-columns: 1fr 1fr;
 		gap: 1rem;
 		margin-top: 1rem;
-		align-items: start;
 	}
 
 	.controls-section {
