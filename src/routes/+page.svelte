@@ -1,8 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import JSZip from 'jszip';
-	// Importação de funções do banco de dados
-	import { resetDB, transactionComplete, openDB, STORE_NAMES } from '$lib/db';
+	import { processZip } from '$lib/zipProcessor';
 
 	// Referências a elementos do DOM
 	let uploadArea: HTMLElement;
@@ -21,52 +19,31 @@
 	async function handleZip(file: File): Promise<void> {
 		resetState();
 		selectedFileName = file.name;
+		loading = true; // Set loading true early
 
 		try {
-			validateFile(file);
-			loading = true;
-			loadingMessage = 'Validando arquivo...';
-
+			// Confirmation before potentially lengthy processing
 			if (!confirm(`Uploading "${file.name}" will replace all existing data. Continue?`)) {
-				resetState();
+				resetState(); // Reset if user cancels
 				return;
 			}
 
-			loadingMessage = 'Limpando dados antigos...';
-			await resetDB();
+			// Pass the state update function to the processor
+			await processZip(file, (message) => {
+				loadingMessage = message;
+			});
 
-			loadingMessage = 'Lendo arquivo ZIP...';
-			const zip = await JSZip.loadAsync(file);
-			const entries = getFileEntries(zip);
-
-			loadingMessage = 'Verificando estrutura do ZIP...';
-			const invalidFiles = entries.filter((name) => !/^(.*)\.(py\.json|py\.py|py|md)$/.test(name));
-			if (invalidFiles.length) {
-				throw new Error(
-					`Arquivos com extensões não permitidas encontrados: ${invalidFiles.join(', ')}. Apenas .py, .py.py, .md e .py.json são aceitos.`
-				);
-			}
-
-			const map = mapBaseToExt(entries);
-			const missing = getMissingBases(map);
-			if (missing.length) {
-				throw new Error(
-					`O ZIP está incompleto. Cada item deve ter arquivos .py, .py.json e .md. Faltam arquivos para: ${missing.join(', ')}`
-				);
-			}
-
-			loadingMessage = 'Armazenando dados...';
-			await storeZipContents(map, zip);
-
+			// Success state handling remains in the component
 			success = true;
 			loadingMessage = 'Carregamento concluído!';
-			await new Promise((resolve) => setTimeout(resolve, 1000));
+			await new Promise((resolve) => setTimeout(resolve, 1000)); // Keep delay for user feedback
 			goto('/files');
 		} catch (err: any) {
-			console.error(err);
+			console.error('Error during ZIP processing:', err); // Log the error
 			error = err.message || 'Erro desconhecido ao processar o arquivo ZIP.';
-			selectedFileName = null;
+			selectedFileName = null; // Clear selected file on error
 		} finally {
+			// Ensure loading is always set to false and drag-over is removed
 			loading = false;
 			uploadArea?.classList.remove('drag-over');
 		}
@@ -80,96 +57,7 @@
 		success = false;
 		loading = false;
 		selectedFileName = null;
-		loadingMessage = 'Carregando...';
-	}
-
-	/**
-	 * validateFile: verifica tamanho e tipo do arquivo.
-	 */
-	function validateFile(file: File): void {
-		if (file.size > 50 * 1024 * 1024) throw new Error('O arquivo ZIP excede 50 MB.');
-		if (!file.name.endsWith('.zip')) throw new Error('Por favor selecione um arquivo ZIP.');
-	}
-
-	/**
-	 * getFileEntries: retorna lista de arquivos não-diretório no ZIP.
-	 */
-	function getFileEntries(zip: JSZip): string[] {
-		return Object.values(zip.files)
-			.filter((f) => !f.dir)
-			.map((f) => f.name);
-	}
-
-	/**
-	 * mapBaseToExt: mapeia baseName para conjunto de extensões encontradas.
-	 */
-	function mapBaseToExt(names: string[]): Map<string, Set<string>> {
-		const map = new Map<string, Set<string>>();
-		for (const name of names) {
-			const filename = name.split('/').pop()!;
-			let base, ext;
-
-			if (filename.endsWith('.py.json')) {
-				base = filename.slice(0, -8);
-				ext = 'py.json';
-			} else if (filename.endsWith('.py.py')) {
-				base = filename.slice(0, -6);
-				ext = 'py.py';
-			} else if (filename.endsWith('.py')) {
-				base = filename.slice(0, -3);
-				ext = 'py';
-			} else if (filename.endsWith('.md')) {
-				base = filename.slice(0, -3);
-				ext = 'md';
-			} else {
-				continue;
-			}
-
-			if (!map.has(base)) map.set(base, new Set());
-			map.get(base)!.add(ext);
-		}
-		return map;
-	}
-
-	/**
-	 * getMissingBases: identifica baseNames sem todos os arquivos obrigatórios.
-	 */
-	function getMissingBases(map: Map<string, Set<string>>): string[] {
-		return Array.from(map.entries())
-			.filter(([_, exts]) => !exts.has('py') || !exts.has('py.json') || !exts.has('md'))
-			.map(([base]) => base);
-	}
-
-	/**
-	 * storeZipContents: armazena conteúdos do ZIP no IndexedDB.
-	 */
-	async function storeZipContents(map: Map<string, Set<string>>, zip: JSZip): Promise<void> {
-		const db = await openDB();
-
-		for (const base of map.keys()) {
-			const [codeTxt, metaTxt, mdTxt] = await Promise.all([
-				zip.file(`${base}.py`)!.async('text'),
-				zip.file(`${base}.py.json`)!.async('text'),
-				zip.file(`${base}.md`)!.async('text')
-			]);
-
-			const mdLines = mdTxt.split('\n');
-			const trimmedMd = mdLines.length > 2 ? mdLines.slice(1, -1).join('\n') : mdTxt;
-
-			const tx = db.transaction(Object.values(STORE_NAMES), 'readwrite');
-			const codeStore = tx.objectStore(STORE_NAMES.CODE);
-			const metaStore = tx.objectStore(STORE_NAMES.META);
-			const mdStore = tx.objectStore(STORE_NAMES.MARKDOWN);
-			const stateStore = tx.objectStore(STORE_NAMES.STATE);
-
-			codeStore.put({ base, code: codeTxt });
-			metaStore.put({ base, meta: JSON.parse(metaTxt) });
-			mdStore.put({ base, md: trimmedMd });
-			stateStore.put({ base, state: 'not-compared' });
-
-			await transactionComplete(tx);
-			console.log(`Stored data for base: ${base}`);
-		}
+		loadingMessage = 'Carregando...'; // Reset message
 	}
 
 	/**
@@ -192,7 +80,10 @@
 	 */
 	function onDragOver(e: DragEvent): void {
 		e.preventDefault();
-		uploadArea.classList.add('drag-over');
+		// Avoid adding class if already loading
+		if (!loading) {
+			uploadArea.classList.add('drag-over');
+		}
 	}
 
 	/**
@@ -207,6 +98,8 @@
 	 */
 	function onDrop(e: DragEvent): void {
 		e.preventDefault();
+		uploadArea.classList.remove('drag-over'); // Ensure class is removed on drop
+		if (loading) return; // Prevent drop while loading
 		const files = e.dataTransfer?.files;
 		if (files?.length) handleZip(files[0]);
 	}
@@ -217,7 +110,10 @@
 	function onKeyDown(event: KeyboardEvent): void {
 		if (event.key === 'Enter' || event.key === ' ') {
 			event.preventDefault();
-			openFilePicker();
+			if (!loading) {
+				// Prevent opening picker while loading
+				openFilePicker();
+			}
 		}
 	}
 </script>
@@ -231,9 +127,10 @@
 	bind:this={uploadArea}
 	class="upload-area"
 	role="button"
-	tabindex="0"
+	tabindex={loading ? -1 : 0}
 	aria-describedby="upload-instructions"
-	onclick={openFilePicker}
+	aria-disabled={loading}
+	onclick={loading ? undefined : openFilePicker}
 	ondragover={onDragOver}
 	ondragleave={onDragLeave}
 	ondrop={onDrop}
@@ -241,7 +138,6 @@
 >
 	{#if loading}
 		<p>{loadingMessage}</p>
-		<!-- Optional: Add a spinner SVG or component here -->
 	{:else if selectedFileName}
 		<p>Arquivo selecionado: <strong>{selectedFileName}</strong></p>
 		<p>Arraste outro arquivo ou clique para substituir.</p>
@@ -250,18 +146,22 @@
 			Arraste e solte o arquivo ZIP aqui,<br />ou clique para selecionar.
 		</p>
 	{/if}
-	<input bind:this={fileInput} class="hidden" type="file" accept=".zip" onchange={onFileSelected} />
+	<input
+		bind:this={fileInput}
+		class="hidden"
+		type="file"
+		accept=".zip"
+		onchange={onFileSelected}
+		disabled={loading}
+	/>
 </div>
 
-<!-- Add aria-live for feedback messages -->
 {#if error}
 	<p class="message error" role="alert">{error}</p>
 {:else if success && !loading}
-	<!-- Show success only briefly before redirect -->
 	<p class="message success" role="status">{loadingMessage}</p>
 {/if}
 
-<!-- Style remains the same -->
 <style>
 	.upload-area {
 		border: 2px dashed #aaa;
@@ -269,10 +169,16 @@
 		padding: 2rem;
 		text-align: center;
 		cursor: pointer;
-		transition: border-color 0.2s;
+		transition:
+			border-color 0.2s,
+			background-color 0.2s;
+	}
+	.upload-area[aria-disabled='true'] {
+		cursor: not-allowed;
+		opacity: 0.7;
+		background-color: #f8f8f8;
 	}
 	.upload-area p {
-		/* Add some margin between lines if needed */
 		margin-bottom: 0.5rem;
 	}
 	.upload-area p:last-child {

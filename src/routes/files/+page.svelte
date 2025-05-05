@@ -275,7 +275,6 @@
 	});
 </script>
 
-<!-- HTML structure remains the same -->
 {#if loading}
 	<p>Carregando arquivos…</p>
 {:else if error}
@@ -342,7 +341,6 @@
 	<p>Nenhum item para exibir.</p>
 {/if}
 
-<!-- Styles remain the same -->
 <style>
 	:root {
 		--button-padding: 0.5rem 1rem;
@@ -356,7 +354,6 @@
 		--button-cursor-disabled: not-allowed;
 		--button-opacity-disabled: 0.6;
 	}
-	/* ... existing styles ... */
 	.error {
 		color: crimson;
 	}
@@ -400,16 +397,15 @@
 		min-width: 150px;
 	}
 
-	/* Add style for the textarea */
 	.comment-textarea {
-		width: 100%; /* Take full width of its container */
+		width: 100%;
 		padding: 0.5rem;
 		border: 1px solid #ccc;
 		border-radius: 4px;
-		font-family: inherit; /* Use the same font as the rest of the page */
+		font-family: inherit;
 		font-size: 1rem;
-		box-sizing: border-box; /* Include padding and border in the element's total width and height */
-		resize: vertical; /* Allow vertical resizing */
+		box-sizing: border-box;
+		resize: vertical;
 	}
 
 	@media (max-width: 1024px) {
@@ -437,16 +433,16 @@
 	}
 	.top-controls-wrapper {
 		display: flex;
-		justify-content: space-between; /* Pushes items to ends */
-		align-items: center; /* Vertically align items */
-		margin-bottom: 1rem; /* Keep the margin */
-		flex-wrap: wrap; /* Allow wrapping on smaller screens */
-		gap: 1rem; /* Add gap between filter and action buttons if they wrap */
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 1rem;
+		flex-wrap: wrap;
+		gap: 1rem;
 	}
 	.action-buttons {
-		display: flex; /* Keep buttons in a row */
-		gap: 1rem; /* Space between action buttons */
-		flex-wrap: wrap; /* Allow action buttons themselves to wrap */
+		display: flex;
+		gap: 1rem;
+		flex-wrap: wrap;
 	}
 	.action-buttons button {
 		padding: var(--button-padding);
