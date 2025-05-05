@@ -3,6 +3,7 @@ import type { PythonCode } from '$lib/types/pythonCode';
 import type { Markdown } from '$lib/types/markdown';
 import type { stateComparison } from '$lib/types/stateComparison';
 import type { FilterOptions } from '$lib/types/filterOptions';
+import { browser } from '$app/environment';
 
 type ComparisonStatus = Exclude<FilterOptions, 'all'>;
 
@@ -20,7 +21,7 @@ export interface CombinedItem {
 }
 
 const DB_NAME = 'PIBIC';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export const STORE_NAMES = {
 	CODE: 'pythonCode',
@@ -38,6 +39,10 @@ type StoreName = (typeof STORE_NAMES)[keyof typeof STORE_NAMES];
  * Handles creation and upgrades.
  */
 export function openDB(): Promise<IDBDatabase> {
+	if (!browser) {
+		// running under SSR/build: bail out early
+		return Promise.reject(new Error('IndexedDB is only available in the browser'));
+	}
 	return new Promise((resolve, reject) => {
 		const request = indexedDB.open(DB_NAME, DB_VERSION);
 
@@ -78,7 +83,10 @@ export function deleteDB(): Promise<void> {
 export function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
 	return new Promise((resolve, reject) => {
 		request.onsuccess = () => resolve(request.result);
-		request.onerror = () => reject(request.error);
+		request.onerror = () => {
+			console.error('[IndexedDB] request error:', request, 'erro →', request.error);
+			reject(request.error);
+		};
 	});
 }
 
@@ -121,8 +129,28 @@ async function getAllItems<T>(storeName: StoreName): Promise<T[]> {
 async function putItem<T>(storeName: StoreName, item: T): Promise<IDBValidKey> {
 	const db = await openDB();
 	const tx = db.transaction(storeName, 'readwrite');
+
+	// 1) Handlers de erro na transação
+	tx.onabort = () => {
+		console.error(`[IndexedDB] transaction ABORTED on store "${storeName}":`, tx.error);
+	};
+	tx.onerror = () => {
+		console.error(`[IndexedDB] transaction ERROR on store "${storeName}":`, tx.error);
+	};
+
 	const store = tx.objectStore(storeName);
-	const result = await requestToPromise(store.put(item));
+	const request = store.put(item);
+
+	// 2) Handler de erro na operação de put
+	request.onerror = () => {
+		console.error(
+			`[IndexedDB] failed PUT in store "${storeName}" for key "${(item as never) ?? ''}":`,
+			request.error
+		);
+	};
+
+	// 3) Aguardar conclusão da transação como antes
+	const result = await requestToPromise(request);
 	await transactionComplete(tx);
 	return result;
 }
@@ -133,7 +161,7 @@ async function putItem<T>(storeName: StoreName, item: T): Promise<IDBValidKey> {
 export async function clearStores(storeNames: StoreName[]): Promise<void> {
 	const db = await openDB();
 	const tx = db.transaction(storeNames, 'readwrite');
-	const promises: Promise<any>[] = [];
+	const promises = [];
 	for (const storeName of storeNames) {
 		promises.push(requestToPromise(tx.objectStore(storeName).clear()));
 	}
