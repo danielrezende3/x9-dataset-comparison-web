@@ -6,8 +6,8 @@ import { resetDB, transactionComplete, openDB, STORE_NAMES } from '$lib/db';
 /////////////////////////
 
 const CODE_EXTENSIONS = ['py', 'c'] as const;
-const MD_EXT = 'md' as const;
-
+const RENDER_EXTENSION = 'svg' as const;
+const MAX_FILE_SIZE = 1;
 type FilenameParts = { base: string; ext: string };
 type BaseMap = Map<string, Set<string>>;
 
@@ -15,6 +15,31 @@ type BaseMap = Map<string, Set<string>>;
 const Logger = {
 	warn: console.warn.bind(console, '[zipProcessor]'),
 	info: console.log.bind(console, '[zipProcessor]')
+};
+///////////////////////////
+// — MESSAGES MODULE  — //
+///////////////////////////
+
+const MESSAGES = {
+	invalidZip: 'Selecione um arquivo ZIP (.zip).',
+	zipTooLarge: `O ZIP excede ${MAX_FILE_SIZE} MB.`,
+	onlyAllowedExtensions: () =>
+		`Somente .${[...CODE_EXTENSIONS, RENDER_EXTENSION].join(', .')} são permitidos.`,
+	onlyAllowedExtensionsFound: (invalid: string[]) =>
+		`${MESSAGES.onlyAllowedExtensions()} Encontrados: ${invalid.join(', ')}`,
+	status: {
+		validatingZip: 'Validando ZIP…',
+		cleaningDB: 'Limpando banco…',
+		readingZip: 'Lendo ZIP…',
+		validatingContent: 'Validando conteúdo…',
+		writingDB: 'Gravando no banco…'
+	},
+	skippingNoMd: (base: string) => `Pulando "${base}" sem .${RENDER_EXTENSION}`,
+	skippingFileNotFound: (base: string) => `Pulando "${base}" — arquivo não encontrado no ZIP`,
+	persisted: (base: string, ext: string) => `Persistido: ${base} (.${ext} + .${RENDER_EXTENSION})`,
+	incompleteBases: (bases: string[]) =>
+		`Faltam arquivos para: ${bases.join(', ')}. ` +
+		`Cada conjunto precisa de .${RENDER_EXTENSION} + (.${CODE_EXTENSIONS.join(' ou .')}).`
 };
 
 //////////////////////////
@@ -31,7 +56,7 @@ function parseFilename(filename: string): FilenameParts | null {
 	const base = filename.slice(0, dot);
 	const ext = filename.slice(dot + 1);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	if ([...CODE_EXTENSIONS, MD_EXT].includes(ext as any)) {
+	if ([...CODE_EXTENSIONS, RENDER_EXTENSION].includes(ext as any)) {
 		return { base, ext };
 	}
 	return null;
@@ -40,10 +65,10 @@ function parseFilename(filename: string): FilenameParts | null {
 /** Throws if file not a .zip or too large. */
 function validateZipFile(file: File): void {
 	if (!file.name.toLowerCase().endsWith('.zip')) {
-		throw new Error('Selecione um arquivo ZIP (.zip).');
+		throw new Error(MESSAGES.invalidZip);
 	}
-	if (file.size > 50 * 1024 * 1024) {
-		throw new Error('O ZIP excede 50 MB.');
+	if (file.size > MAX_FILE_SIZE * 1024 * 1024) {
+		throw new Error(MESSAGES.zipTooLarge);
 	}
 }
 
@@ -51,9 +76,12 @@ function validateZipFile(file: File): void {
 function validateEntries(entries: string[]): void {
 	const invalid = entries
 		.map((p) => p.split('/').pop()!)
-		.filter((name) => !name.match(/\.(py|c|md)$/i));
+		.filter(
+			(name) =>
+				!name.match(new RegExp(`\\.(${CODE_EXTENSIONS.join('|')}|${RENDER_EXTENSION})$`, 'i'))
+		);
 	if (invalid.length) {
-		throw new Error(`Somente .py, .c e .md são permitidos. Encontrados: ${invalid.join(', ')}`);
+		throw new Error(MESSAGES.onlyAllowedExtensionsFound(invalid));
 	}
 }
 
@@ -79,7 +107,7 @@ function buildBaseMap(entries: string[]): BaseMap {
 function findIncompleteBases(map: BaseMap): string[] {
 	const missing: string[] = [];
 	for (const [base, exts] of map.entries()) {
-		if (!exts.has(MD_EXT) || !CODE_EXTENSIONS.some((e) => exts.has(e))) {
+		if (!exts.has(RENDER_EXTENSION) || !CODE_EXTENSIONS.some((e) => exts.has(e))) {
 			missing.push(base);
 		}
 	}
@@ -100,17 +128,16 @@ async function storeContents(map: BaseMap, zip: JSZip): Promise<void> {
 	const db = await openDB();
 
 	for (const [base, exts] of map.entries()) {
-		// pick py over c if both exist
 		const codeExt = CODE_EXTENSIONS.find((e) => exts.has(e))!;
-		if (!exts.has(MD_EXT)) {
-			Logger.warn(`Pulando "${base}" sem .md`);
+		if (!exts.has(RENDER_EXTENSION)) {
+			Logger.warn(MESSAGES.skippingNoMd(base));
 			continue;
 		}
 
 		const codeFile = zip.file(`${base}.${codeExt}`);
-		const mdFile = zip.file(`${base}.${MD_EXT}`);
+		const mdFile = zip.file(`${base}.${RENDER_EXTENSION}`);
 		if (!codeFile || !mdFile) {
-			Logger.warn(`Pulando "${base}" — arquivo não encontrado no ZIP`);
+			Logger.warn(MESSAGES.skippingFileNotFound(base));
 			continue;
 		}
 
@@ -129,7 +156,7 @@ async function storeContents(map: BaseMap, zip: JSZip): Promise<void> {
 		tx.objectStore(STORE_NAMES.STATE).put({ base, state: 'not-compared' });
 
 		await transactionComplete(tx);
-		Logger.info(`Persistido: ${base} (.${codeExt} + .md)`);
+		Logger.info(MESSAGES.persisted(base, codeExt));
 	}
 }
 
@@ -137,24 +164,17 @@ async function storeContents(map: BaseMap, zip: JSZip): Promise<void> {
 // — MAIN EXPORT —  //
 //////////////////////
 
-/**
- * processZip:
- *   1. valida arquivo
- *   2. reseta DB
- *   3. valida estrutura do ZIP
- *   4. grava conteúdo no IndexedDB
- */
 export async function processZip(file: File, updateStatus: (msg: string) => void): Promise<void> {
-	updateStatus('Validando ZIP…');
+	updateStatus(MESSAGES.status.validatingZip);
 	validateZipFile(file);
 
-	updateStatus('Limpando banco…');
+	updateStatus(MESSAGES.status.cleaningDB);
 	await resetDB();
 
-	updateStatus('Lendo ZIP…');
+	updateStatus(MESSAGES.status.readingZip);
 	const zip = await JSZip.loadAsync(file);
 
-	updateStatus('Validando conteúdo…');
+	updateStatus(MESSAGES.status.validatingContent);
 	const entries = Object.values(zip.files)
 		.filter((f) => !f.dir)
 		.map((f) => f.name);
@@ -164,12 +184,9 @@ export async function processZip(file: File, updateStatus: (msg: string) => void
 
 	const incomplete = findIncompleteBases(baseMap);
 	if (incomplete.length) {
-		throw new Error(
-			`Faltam arquivos para: ${incomplete.join(', ')}. ` +
-				`Cada conjunto precisa de .md + (.py ou .c).`
-		);
+		throw new Error(MESSAGES.incompleteBases(incomplete));
 	}
 
-	updateStatus('Gravando no banco…');
+	updateStatus(MESSAGES.status.writingDB);
 	await storeContents(baseMap, zip);
 }

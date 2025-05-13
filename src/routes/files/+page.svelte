@@ -27,6 +27,7 @@
 		transactionComplete,
 		STORE_NAMES
 	} from '$lib/db';
+	import PanZoomSvg from '$lib/components/PanZoomSvg.svelte';
 
 	// Aliases
 	type ComparisonStatus = Exclude<FilterOptions, 'all'>;
@@ -360,7 +361,7 @@
 				</div>
 
 				<div class="diagram-section">
-					<PanZoomMermaid diagram={current.md} />
+					<PanZoomSvg diagram={current.md} />
 				</div>
 			</div>
 		{/if}
