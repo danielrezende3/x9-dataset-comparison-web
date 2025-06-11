@@ -121,7 +121,7 @@
 <main class="page-container">
 	<h1>Comparador entre código-fonte e X9-json.</h1>
 	<p>
-		Faça upload de um arquivo ZIP contendo <b>apenas</b> os arquivos <b>.py</b> e <b>.svg</b> para cada item a ser comparado.
+		Faça upload de um arquivo ZIP contendo <b>apenas</b> os arquivos <b>.[py|c]</b> e <b>.[py|c].svg</b> para cada item a ser comparado.
 	</p>
 	<p>Se você já fez o upload pro banco, <a href="/files">clique aqui</a>.</p>
 	<div
