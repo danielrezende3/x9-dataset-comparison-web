@@ -23,8 +23,11 @@ const Logger = {
 const MESSAGES = {
 	invalidZip: 'Selecione um arquivo ZIP (.zip).',
 	zipTooLarge: `O ZIP excede ${MAX_FILE_SIZE} MB.`,
-	onlyAllowedExtensions: () =>
-		`Somente .${[...CODE_EXTENSIONS, RENDER_EXTENSION].join(', .')} são permitidos.`,
+	onlyAllowedExtensions: () => {
+		const code = CODE_EXTENSIONS.map((e) => `.${e}`).join(', ');
+		const render = CODE_EXTENSIONS.map((e) => `.${e}.${RENDER_EXTENSION}`).join(', ');
+		return `Somente ${code} ou ${render} são permitidos.`;
+	},
 	onlyAllowedExtensionsFound: (invalid: string[]) =>
 		`${MESSAGES.onlyAllowedExtensions()} Encontrados: ${invalid.join(', ')}`,
 	status: {
@@ -51,13 +54,20 @@ const MESSAGES = {
  * Returns null for unsupported extensions.
  */
 function parseFilename(filename: string): FilenameParts | null {
-	const dot = filename.lastIndexOf('.');
-	if (dot < 0) return null;
-	const base = filename.slice(0, dot);
-	const ext = filename.slice(dot + 1);
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	if ([...CODE_EXTENSIONS, RENDER_EXTENSION].includes(ext as any)) {
-		return { base, ext };
+	filename = filename.toLowerCase();
+	// 1) arquivo de código (.py ou .c)
+	for (const codeExt of CODE_EXTENSIONS) {
+		const suffix = `.${codeExt}`;
+		if (filename.endsWith(suffix)) {
+			return { base: filename.slice(0, -suffix.length), ext: codeExt };
+		}
+	}
+	// 2) arquivo de render apenas se vier como .<codeExt>.svg
+	for (const codeExt of CODE_EXTENSIONS) {
+		const suffix = `.${codeExt}.${RENDER_EXTENSION}`;
+		if (filename.endsWith(suffix)) {
+			return { base: filename.slice(0, -suffix.length), ext: RENDER_EXTENSION };
+		}
 	}
 	return null;
 }
@@ -78,7 +88,9 @@ function validateEntries(entries: string[]): void {
 		.map((p) => p.split('/').pop()!)
 		.filter(
 			(name) =>
-				!name.match(new RegExp(`\\.(${CODE_EXTENSIONS.join('|')}|${RENDER_EXTENSION})$`, 'i'))
+				!name.match(
+					new RegExp(`\\.(?:${CODE_EXTENSIONS.join('|')})(?:\\.${RENDER_EXTENSION})?$`, 'i')
+				)
 		);
 	if (invalid.length) {
 		throw new Error(MESSAGES.onlyAllowedExtensionsFound(invalid));
@@ -135,7 +147,7 @@ async function storeContents(map: BaseMap, zip: JSZip): Promise<void> {
 		}
 
 		const codeFile = zip.file(`${base}.${codeExt}`);
-		const mdFile = zip.file(`${base}.${RENDER_EXTENSION}`);
+		const mdFile = zip.file(`${base}.${codeExt}.${RENDER_EXTENSION}`);
 		if (!codeFile || !mdFile) {
 			Logger.warn(MESSAGES.skippingFileNotFound(base));
 			continue;
