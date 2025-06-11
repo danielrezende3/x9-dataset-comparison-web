@@ -77,7 +77,12 @@
 		page = 1;
 		console.log('Filter changed, resetting page to 1:', currentFilter);
 	});
-
+	$effect(() => {
+		if (page > filteredItems.length) {
+			page = filteredItems.length > 0 ? filteredItems.length : 1;
+			console.log('Adjusted page after filter change:', page);
+		}
+	});
 	$effect(() => {
 		if (!current) {
 			previousBase = null;
